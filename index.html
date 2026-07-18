@@ -488,29 +488,78 @@ GOOGLE SHEETS SYNC (BLINDADO)
 let isSyncing = false;
 
 async function syncWithSheets() {
-if (isSyncing) return;
-if (!state.config.apiUrl || !state.config.apiToken) {
-toast('Configurá la URL y token en ⚙️ Configuración', 'info');
-return;
-}
+  if (isSyncing) return;
+  if (!state.config.apiUrl || !state.config.apiToken) {
+    toast('Configurá la URL y token en ⚙️ Configuración', 'info');
+    return;
+  }
 
-isSyncing = true;
-updateSyncUI('syncing');
+  isSyncing = true;
+  updateSyncUI('syncing');
 
-try {
-// 1. Enviar pendientes primero
-if (state.pendingChanges.length > 0) {
-const pendientes = [...state.pendingChanges];
-for (const change of pendientes) {
-try {
-await apiCall('POST', { ...change, token: state.config.apiToken });
-state.pendingChanges = state.pendingChanges.filter(p => p.timestamp !== change.timestamp);
-} catch (err) {
-console.warn("⚠️ Falló envío de cambio pendiente", err);
-break;
-}
-}
-saveLocal();
+  try {
+    // 1. Enviar pendientes primero
+    if (state.pendingChanges.length > 0) {
+      const pendientes = [...state.pendingChanges];
+      for (const change of pendientes) {
+        try {
+          await apiCall('POST', { ...change, token: state.config.apiToken });
+          state.pendingChanges = state.pendingChanges.filter(p => p.timestamp !== change.timestamp);
+        } catch (err) {
+          console.warn("⚠️ Falló envío de cambio pendiente", err);
+          break;
+        }
+      }
+      saveLocal();
+    }
+
+    // 2. Descargar datos
+    const url = `${state.config.apiUrl}?action=getAll&token=${encodeURIComponent(state.config.apiToken)}&t=${Date.now()}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    
+    // 🔍 DIAGNÓSTICO FRONTEND
+    console.log("📥 Datos crudos recibidos del servidor:", data);
+    if (data.agenda) {
+      console.log(`📅 Cantidad de registros de agenda recibidos: ${data.agenda.length}`);
+      if (data.agenda.length > 0) {
+        console.log("📅 Ejemplo del primer registro de agenda:", data.agenda[0]);
+      }
+    }
+
+    if (data.error) throw new Error(data.error);
+
+    // 3. Actualizar estado
+    if (data.pacientes && Array.isArray(data.pacientes)) {
+      state.pacientes = data.pacientes.map(p => ({ ...p, id: String(p.id || '').trim() }));
+    }
+    if (data.agenda && Array.isArray(data.agenda)) {
+      state.agenda = data.agenda.map(a => ({ 
+        ...a, 
+        id: String(a.id || '').trim(), 
+        pacienteId: String(a.pacienteId || '').trim(),
+        diaSemana: a.diaSemana ? String(a.diaSemana).trim() : '' 
+      }));
+    }
+    if (data.evoluciones && Array.isArray(data.evoluciones)) {
+      state.evoluciones = data.evoluciones.map(e => ({ ...e, id: String(e.id || '').trim(), pacienteId: String(e.pacienteId || '').trim() }));
+    }
+
+    state.lastSync = new Date().toISOString();
+    saveLocal();
+    updateSyncUI('ok');
+    toast('Sincronizado con Google Sheets');
+
+  } catch (err) {
+    console.error("💥 Error en sincronización:", err);
+    updateSyncUI('error');
+    toast('Error al sincronizar: ' + err.message, 'error');
+  } finally {
+    isSyncing = false;
+    renderAll();
+    updatePacienteFilters();
+  }
 }
 
 // 2. Descargar datos
