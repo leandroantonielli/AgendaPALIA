@@ -483,12 +483,16 @@ state.viewMode = localStorage.getItem(KEYS.viewMode) || 'cards';
 }
 
 /* ============================================================
-GOOGLE SHEETS SYNC (BLINDADO)
+GOOGLE SHEETS SYNC (BLINDADO Y CON DIAGNÓSTICO)
 ============================================================ */
 let isSyncing = false;
 
 async function syncWithSheets() {
-  if (isSyncing) return;
+  if (isSyncing) {
+    console.log("⏳ Sincronización ya en progreso, omitiendo solicitud...");
+    return;
+  }
+  
   if (!state.config.apiUrl || !state.config.apiToken) {
     toast('Configurá la URL y token en ⚙️ Configuración', 'info');
     return;
@@ -498,7 +502,7 @@ async function syncWithSheets() {
   updateSyncUI('syncing');
 
   try {
-    // 1. Enviar pendientes primero
+    // PASO 1: Enviar pendientes primero (con tolerancia a fallos individual)
     if (state.pendingChanges.length > 0) {
       const pendientes = [...state.pendingChanges];
       for (const change of pendientes) {
@@ -506,31 +510,29 @@ async function syncWithSheets() {
           await apiCall('POST', { ...change, token: state.config.apiToken });
           state.pendingChanges = state.pendingChanges.filter(p => p.timestamp !== change.timestamp);
         } catch (err) {
-          console.warn("⚠️ Falló envío de cambio pendiente", err);
-          break;
+          console.warn("⚠️ Falló el envío de un cambio pendiente. Se reintentará la próxima vez.", err);
+          break; // Salimos del bucle para no seguir enviando si hay un error de red
         }
       }
       saveLocal();
     }
 
-    // 2. Descargar datos
+    // PASO 2: Descargar datos del servidor
+    console.log("📥 Iniciando descarga de datos...");
     const url = `${state.config.apiUrl}?action=getAll&token=${encodeURIComponent(state.config.apiToken)}&t=${Date.now()}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
     
-    // 🔍 DIAGNÓSTICO FRONTEND
-    console.log("📥 Datos crudos recibidos del servidor:", data);
-    if (data.agenda) {
-      console.log(`📅 Cantidad de registros de agenda recibidos: ${data.agenda.length}`);
-      if (data.agenda.length > 0) {
-        console.log("📅 Ejemplo del primer registro de agenda:", data.agenda[0]);
-      }
-    }
+    const data = await res.json();
+    console.log("📦 Datos recibidos:", { 
+      pacientes: data.pacientes?.length || 0, 
+      agenda: data.agenda?.length || 0, 
+      evoluciones: data.evoluciones?.length || 0 
+    });
 
     if (data.error) throw new Error(data.error);
 
-    // 3. Actualizar estado
+    // PASO 3: Actualizar estado local SOLO si los datos son válidos
     if (data.pacientes && Array.isArray(data.pacientes)) {
       state.pacientes = data.pacientes.map(p => ({ ...p, id: String(p.id || '').trim() }));
     }
@@ -552,49 +554,16 @@ async function syncWithSheets() {
     toast('Sincronizado con Google Sheets');
 
   } catch (err) {
-    console.error("💥 Error en sincronización:", err);
+    console.error("💥 Error crítico en la descarga de sincronización:", err);
     updateSyncUI('error');
     toast('Error al sincronizar: ' + err.message, 'error');
   } finally {
+    // PASO 4: CRÍTICO - SIEMPRE renderizar, incluso si falló la descarga,
+    // para que la pantalla NUNCA quede en blanco y muestre lo que hay en memoria.
     isSyncing = false;
     renderAll();
     updatePacienteFilters();
   }
-}
-
-// 2. Descargar datos
-const url = `${state.config.apiUrl}?action=getAll&token=${encodeURIComponent(state.config.apiToken)}&t=${Date.now()}`;
-const res = await fetch(url);
-if (!res.ok) throw new Error('HTTP ' + res.status);
-const data = await res.json();
-if (data.error) throw new Error(data.error);
-
-// 3. Actualizar estado solo si los datos son válidos
-if (data.pacientes && Array.isArray(data.pacientes)) {
-state.pacientes = data.pacientes.map(p => ({ ...p, id: String(p.id).trim() }));
-}
-if (data.agenda && Array.isArray(data.agenda)) {
-state.agenda = data.agenda.map(a => ({ ...a, id: String(a.id).trim(), pacienteId: String(a.pacienteId).trim() }));
-}
-if (data.evoluciones && Array.isArray(data.evoluciones)) {
-state.evoluciones = data.evoluciones.map(e => ({ ...e, id: String(e.id).trim(), pacienteId: String(e.pacienteId).trim() }));
-}
-
-state.lastSync = new Date().toISOString();
-saveLocal();
-updateSyncUI('ok');
-toast('Sincronizado con Google Sheets');
-
-} catch (err) {
-console.error("💥 Error en sincronización:", err);
-updateSyncUI('error');
-toast('Error al sincronizar: ' + err.message, 'error');
-} finally {
-isSyncing = false;
-// CRÍTICO: Siempre renderizar, incluso si falla, para que la pantalla NUNCA quede en blanco
-renderAll();
-updatePacienteFilters();
-}
 }
 
 async function apiCall(method, body) {
