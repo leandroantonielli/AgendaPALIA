@@ -486,7 +486,29 @@ state.viewMode = localStorage.getItem(KEYS.viewMode) || 'cards';
 GOOGLE SHEETS SYNC (BLINDADO Y CON DIAGNÓSTICO)
 ============================================================ */
 let isSyncing = false;
-
+// 🛡️ Función de rescate para horas corruptas (formato 1899) que vengan de Sheets
+function saneaHoraFront(val) {
+  if (!val) return '09:00';
+  const s = String(val).trim();
+  
+  // 1. Ya tiene formato correcto "HH:mm" o "H:mm" (ej: "9:00" o "14:30")
+  if (/^\d{1,2}:\d{2}$/.test(s)) {
+    return s.padStart(5, '0'); // Convierte "9:00" en "09:00"
+  }
+  
+  // 2. Es un string ISO corrupto de Sheets (ej: "1899-12-30T13:16:48.000Z")
+  if (s.includes('T')) {
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      // Usamos getHours() local para revertir la conversión a UTC que hizo Apps Script
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      return hh + ':' + mm;
+    }
+  }
+  
+  return '09:00'; // Fallback de seguridad
+}
 async function syncWithSheets() {
   if (isSyncing) {
     console.log("⏳ Sincronización ya en progreso, omitiendo solicitud...");
@@ -510,8 +532,12 @@ async function syncWithSheets() {
           await apiCall('POST', { ...change, token: state.config.apiToken });
           state.pendingChanges = state.pendingChanges.filter(p => p.timestamp !== change.timestamp);
         } catch (err) {
-          console.warn("⚠️ Falló el envío de un cambio pendiente. Se reintentará la próxima vez.", err);
-          break; // Salimos del bucle para no seguir enviando si hay un error de red
+          // FIX: antes este catch cortaba todo el for con un `break`, así que
+          // si UN cambio quedaba atascado, todos los que venían detrás en la
+          // cola nunca se llegaban a enviar (aunque estuvieran bien). Ahora
+          // se sigue intentando con el resto; solo el/los que fallen quedan
+          // pendientes para el próximo intento.
+          console.warn("⚠️ Falló el envío de un cambio pendiente. Se reintentará la próxima vez.", err, change);
         }
       }
       saveLocal();
@@ -541,7 +567,8 @@ async function syncWithSheets() {
         ...a, 
         id: String(a.id || '').trim(), 
         pacienteId: String(a.pacienteId || '').trim(),
-        diaSemana: a.diaSemana ? String(a.diaSemana).trim() : '' 
+        diaSemana: a.diaSemana ? String(a.diaSemana).trim() : '',
+        horaInicio: saneaHoraFront(a.horaInicio) // <--- ¡ESTA LÍNEA ES LA CLAVE!
       }));
     }
     if (data.evoluciones && Array.isArray(data.evoluciones)) {
@@ -1052,16 +1079,12 @@ panel.innerHTML = '';
 return;
 }
 
-// Actualizar opciones del filtro de empresa dinámicamente
-const selPendingEmpresa = document.getElementById('filter-pending-empresa');
-if (selPendingEmpresa) {
-const empresas = [...new Set(activos.map(p => p.empresa).filter(Boolean))].sort();
-const curr = selPendingEmpresa.value;
-selPendingEmpresa.innerHTML = '<option value="">Todas las empresas</option>' +
-empresas.map(e => `<option value="${e}" ${e===curr?'selected':''}>${e}</option>`).join('');
-}
-
-const filtroPendingEmpresa = selPendingEmpresa ? selPendingEmpresa.value : '';
+// Leer la empresa seleccionada ANTES de reconstruir el panel (el select viejo va a desaparecer)
+const selPendingEmpresaPrevio = document.getElementById('filter-pending-empresa');
+const filtroPendingEmpresa = selPendingEmpresaPrevio ? selPendingEmpresaPrevio.value : '';
+const empresasPending = [...new Set(activos.map(p => p.empresa).filter(Boolean))].sort();
+const opcionesEmpresaHtml = '<option value="">Todas las empresas</option>' +
+empresasPending.map(e => `<option value="${e}" ${e===filtroPendingEmpresa?'selected':''}>${e}</option>`).join('');
 
 let pendientes = activos.filter(p => !pacientesConVisita.has(String(p.id).trim()));
 let conVisita = activos.filter(p => pacientesConVisita.has(String(p.id).trim()));
@@ -1089,7 +1112,7 @@ ${pendientes.length === 0
 </p>
 </div>
 <select id="filter-pending-empresa" class="px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium focus:outline-none focus:border-brand-500 bg-white">
-<option value="">Todas las empresas</option>
+${opcionesEmpresaHtml}
 </select>
 </div>
 <div class="divide-y divide-slate-100 max-h-96 overflow-y-auto scrollbar-thin">`;
@@ -1181,9 +1204,9 @@ if (filtroEstado && p.estado !== filtroEstado) return false;
 if (filtroEmpresa && p.empresa !== filtroEmpresa) return false;
 if (filtroOS && p.obraSocial !== filtroOS) return false;
 if (!q) return true;
-return (p.nombre||'').toLowerCase().includes(q) || (p.dni||'').toLowerCase().includes(q) ||
-(p.obraSocial||'').toLowerCase().includes(q) || (p.empresa||'').toLowerCase().includes(q) ||
-(p.contacto||'').toLowerCase().includes(q) || (p.direccion||'').toLowerCase().includes(q);
+return String(p.nombre||'').toLowerCase().includes(q) || String(p.dni||'').toLowerCase().includes(q) ||
+String(p.obraSocial||'').toLowerCase().includes(q) || String(p.empresa||'').toLowerCase().includes(q) ||
+String(p.contacto||'').toLowerCase().includes(q) || String(p.direccion||'').toLowerCase().includes(q);
 });
 }
 
@@ -1297,7 +1320,7 @@ const sorted = [...state.evoluciones]
 .map(e => ({ e, p: pacientesMap.get(String(e.pacienteId).trim()) || null }));
 const filtered = sorted.filter(({e,p}) => {
 if (!q) return true;
-return (p?.nombre||'').toLowerCase().includes(q) || (e.notas||'').toLowerCase().includes(q);
+return String(p?.nombre||'').toLowerCase().includes(q) || String(e.notas||'').toLowerCase().includes(q);
 });
 
 if (filtered.length === 0) {
@@ -1884,6 +1907,12 @@ CLOSE MODALS
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 document.querySelectorAll('.modal-close').forEach(b => b.addEventListener('click', (e) => { const m = e.target.closest('[id^="modal-"]'); if (m) m.classList.add('hidden'); }));
 document.querySelectorAll('[id^="modal-"]').forEach(m => m.addEventListener('click', (e) => { if (e.target === m) m.classList.add('hidden'); }));
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const abiertos = Array.from(document.body.querySelectorAll(':scope > [id^="modal-"]:not(.hidden)'));
+  if (abiertos.length === 0) return;
+  abiertos[abiertos.length - 1].classList.add('hidden');
+});
 
 /* ============================================================
 EVENT DELEGATION
