@@ -567,6 +567,18 @@ async function syncWithSheets() {
       saveLocal();
     }
 
+    // FIX: si después de intentar enviar los pendientes todavía queda alguno sin
+    // subir (falló por red, servidor caído, etc.), NO seguimos a descargar.
+    // Si bajáramos igual, pisaríamos en memoria el cambio local recién hecho con
+    // la versión vieja del servidor (que todavía no tiene ese cambio) — el dato
+    // no se pierde de verdad (sigue en pendingChanges para el próximo intento),
+    // pero en pantalla parecería haber "desaparecido" hasta el próximo sync.
+    if (state.pendingChanges.length > 0) {
+      updateSyncUI('pending');
+      toast('Hay cambios sin poder enviar todavía. Se reintentará en la próxima sincronización.', 'info');
+      return;
+    }
+
     // PASO 2: Descargar datos del servidor
     console.log("📥 Iniciando descarga de datos...");
     const data = await apiCall('POST', { action: 'getAll', token: state.config.apiToken, t: Date.now() });
@@ -758,7 +770,10 @@ return { lunes, sabado };
 function isoDate(d) { return d.toISOString().slice(0,10); }
 
 function addMinutes(hhmm, min) {
-const [h, m] = hhmm.split(':').map(Number);
+const partes = String(hhmm || '09:00').split(':');
+const h = parseInt(partes[0], 10);
+const m = parseInt(partes[1], 10);
+if (isNaN(h) || isNaN(m)) return '09:00';
 const total = h * 60 + m + min;
 const nh = Math.floor(total / 60) % 24;
 const nm = total % 60;
@@ -794,7 +809,7 @@ setTimeout(() => { el.style.opacity='0'; el.style.transition='opacity 0.3s'; set
 
 function osNoRequiereFirma(os) {
 if (!os) return false;
-const n = os.toLowerCase().trim();
+const n = String(os).toLowerCase().trim();
 return n === 'osde' || n === 'cemic';
 }
 
@@ -822,6 +837,79 @@ if (d === 0) return 5;
 return d - 1;
 }
 
+/* ============================================================
+GOOGLE MAPS: "cómo llegar" y "ruta del día"
+============================================================ */
+function direccionCompleta(p) {
+  if (!p) return '';
+  return [p.direccion, p.piso].filter(Boolean).join(', ');
+}
+function mapsLinkDireccion(direccionStr) {
+  if (!direccionStr) return null;
+  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(direccionStr + ', Buenos Aires');
+}
+function mapsLinkPaciente(p) {
+  return mapsLinkDireccion(direccionCompleta(p));
+}
+// Arma un link de ruta multi-parada. Si es 1 sola dirección, es igual a "cómo llegar".
+function mapsLinkRuta(direcciones) {
+  const validas = direcciones.filter(Boolean);
+  if (validas.length === 0) return null;
+  if (validas.length === 1) return mapsLinkDireccion(validas[0]);
+  return 'https://www.google.com/maps/dir/' + validas.map(d => encodeURIComponent(d + ', Buenos Aires')).join('/');
+}
+
+/* ============================================================
+"HACE CUÁNTO NO LO VEO": días desde la última evolución cargada
+============================================================ */
+function diasDesdeUltimaVisita(pacienteId) {
+  let ultima = null;
+  state.evoluciones.forEach(e => {
+    if (e.pacienteId !== pacienteId || !e.fechaVisita) return;
+    if (!ultima || e.fechaVisita > ultima) ultima = e.fechaVisita;
+  });
+  if (!ultima) return null; // nunca se le cargó una evolución
+  const hoy = new Date(); hoy.setHours(0,0,0,0);
+  const f = new Date(ultima + 'T00:00:00');
+  const dias = Math.round((hoy - f) / (24*60*60*1000));
+  return dias;
+}
+// Chip visual según cuántos días pasaron. Umbrales pensados para seguimiento paliativo semanal/quincenal.
+function chipUltimaVisita(pacienteId) {
+  const dias = diasDesdeUltimaVisita(pacienteId);
+  if (dias === null) return '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium whitespace-nowrap">— Sin evoluciones</span>';
+  if (dias === 0) return '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 font-medium whitespace-nowrap">🟢 Hoy</span>';
+  if (dias <= 7) return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 font-medium whitespace-nowrap">🟢 ${dias}d sin visita</span>`;
+  if (dias <= 14) return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium whitespace-nowrap">🟡 ${dias}d sin visita</span>`;
+  return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 font-medium whitespace-nowrap">🔴 ${dias}d sin visita</span>`;
+}
+
+/* ============================================================
+CHECKLIST ADMINISTRATIVO: estado de la última evolución cargada
+============================================================ */
+function ultimaEvolucion(pacienteId) {
+  let ultima = null;
+  state.evoluciones.forEach(e => {
+    if (e.pacienteId !== pacienteId || !e.fechaVisita) return;
+    if (!ultima || e.fechaVisita > ultima) ultima = e;
+  });
+  return ultima;
+}
+function chipsChecklistAdmin(p) {
+  const ev = ultimaEvolucion(p.id);
+  if (!ev) return '';
+  const noFirma = osNoRequiereFirma(p.obraSocial);
+  const sistemaChip = ev.evolucionoSistema
+    ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 font-medium whitespace-nowrap">✅ Sistema</span>'
+    : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-medium whitespace-nowrap">⏳ Sistema</span>';
+  const firmaChip = noFirma
+    ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium whitespace-nowrap">📋 N/A</span>'
+    : (ev.firmoPlanillaOS
+        ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-brand-100 text-brand-700 font-medium whitespace-nowrap">✅ Planilla</span>'
+        : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 font-medium whitespace-nowrap">⏳ Planilla</span>');
+  return sistemaChip + firmaChip;
+}
+
 function getLunesISOForDate(dateStr) {
 if (!dateStr) return null;
 const d = new Date(dateStr + 'T00:00:00');
@@ -834,7 +922,7 @@ return isoDate(d);
 // NUEVA FUNCIÓN: Color por empresa
 function getEmpresaColor(empresa) {
 if (!empresa) return 'bg-slate-100 text-slate-600 border border-slate-200';
-const e = empresa.toLowerCase();
+const e = String(empresa).toLowerCase();
 if (e.includes('carehome')) return 'bg-blue-100 text-blue-700 border border-blue-200';
 if (e.includes('palcare')) return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
 if (e.includes('cemic')) return 'bg-purple-100 text-purple-700 border border-purple-200';
@@ -851,7 +939,7 @@ const lunes = getWeekStart(offset);
 const lunesISO = isoDate(lunes);
 const result = [];
 state.agenda.forEach(a => {
-const hora = a.horaInicio || '09:00';
+const hora = saneaHoraFront(a.horaInicio || '09:00');
 const rec = a.recurrente !== false;
 let aparece = false;
 if (rec) {
@@ -918,9 +1006,13 @@ html += `<button data-action="add-agenda" data-dia="${d}" class="w-full min-h-[8
 const mañana = items.filter(v => v.turno === 'mañana').length;
 const tarde = items.filter(v => v.turno === 'tarde').length;
 if (mañana > 0 || tarde > 0) {
+const direccionesMañana = items.filter(v => v.turno === 'mañana').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
+const direccionesTarde = items.filter(v => v.turno === 'tarde').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
+const rutaMañana = mapsLinkRuta(direccionesMañana);
+const rutaTarde = mapsLinkRuta(direccionesTarde);
 html += `<div class="flex gap-1 mb-2 text-[9px]">
-${mañana > 0 ? `<span class="flex-1 bg-amber-50 text-amber-700 rounded px-1 py-0.5 text-center font-medium">🌅 ${mañana}</span>` : ''}
-${tarde > 0 ? `<span class="flex-1 bg-indigo-50 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde}</span>` : ''}
+${mañana > 0 ? (rutaMañana ? `<a href="${rutaMañana}" target="_blank" rel="noopener" title="Ruta de la mañana en Google Maps" class="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded px-1 py-0.5 text-center font-medium">🌅 ${mañana} 🗺️</a>` : `<span class="flex-1 bg-amber-50 text-amber-700 rounded px-1 py-0.5 text-center font-medium">🌅 ${mañana}</span>`) : ''}
+${tarde > 0 ? (rutaTarde ? `<a href="${rutaTarde}" target="_blank" rel="noopener" title="Ruta de la tarde en Google Maps" class="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde} 🗺️</a>` : `<span class="flex-1 bg-indigo-50 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde}</span>`) : ''}
 </div>`;
 }
 
@@ -954,17 +1046,18 @@ ${v.recurrente ? '<span class="text-[10px] text-slate-400" title="Recurrente">�
 ${edad !== null ? `<p class="text-[10px] text-slate-500">${edad} años</p>` : ''}
 </div>
 <div class="flex flex-col items-end gap-1">
-<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${p.empresa || 'Sin empresa'}</span>
+<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 ${p.usaOpioides==='Sí' ? '<span class="text-[10px]" title="Usa opioides">💊</span>' : ''}
 <span class="text-[9px] px-1 py-0.5 rounded ${turnoColor} font-medium">${v.turno === 'mañana' ? '🌅' : '🌇'}</span>
 </div>
 </div>
 <div class="text-[10px] text-slate-500 space-y-0.5">
-<p>🏠 <span class="truncate">${esc(p.direccion || '-')}</span>${p.piso ? ' · '+p.piso : ''}</p>
+<p>🏠 <span class="truncate">${esc(p.direccion || '-')}</span>${p.piso ? ' · '+esc(p.piso) : ''}</p>
 ${v.notasAgenda ? `<p class="italic">📝 ${esc(v.notasAgenda)}</p>` : ''}
 </div>
 <div class="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition">
 <button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-[10px] font-medium py-1 rounded">✓ Evolucionar</button>
+${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Cómo llegar" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded flex items-center justify-center">📍</a>` : ''}
 <button data-action="edit-agenda" data-id="${v.id}" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">✏️</button>
 </div>
 </div>`;
@@ -1042,14 +1135,22 @@ html += `<div class="text-center py-8 text-slate-400">
 </div>`;
 } else {
 if (mañana.length > 0) {
+const rutaMañana = mapsLinkRuta(mañana.map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim()))));
 html += `<div class="mb-4">
-<p class="text-xs font-bold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1"><span>🌅</span> Mañana <span class="text-slate-400 font-normal">(${mañana.length})</span></p>
+<div class="flex items-center justify-between mb-2">
+<p class="text-xs font-bold text-amber-700 uppercase tracking-wide flex items-center gap-1"><span>🌅</span> Mañana <span class="text-slate-400 font-normal">(${mañana.length})</span></p>
+${rutaMañana ? `<a href="${rutaMañana}" target="_blank" rel="noopener" class="text-[10px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded-lg">🗺️ Ruta mañana</a>` : ''}
+</div>
 <div class="space-y-2">${mañana.map(v => renderMobileVisitCard(v, pacientesMap)).join('')}</div>
 </div>`;
 }
 if (tarde.length > 0) {
+const rutaTarde = mapsLinkRuta(tarde.map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim()))));
 html += `<div>
-<p class="text-xs font-bold text-indigo-700 uppercase tracking-wide mb-2 flex items-center gap-1"><span>🌇</span> Tarde <span class="text-slate-400 font-normal">(${tarde.length})</span></p>
+<div class="flex items-center justify-between mb-2">
+<p class="text-xs font-bold text-indigo-700 uppercase tracking-wide flex items-center gap-1"><span>🌇</span> Tarde <span class="text-slate-400 font-normal">(${tarde.length})</span></p>
+${rutaTarde ? `<a href="${rutaTarde}" target="_blank" rel="noopener" class="text-[10px] font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-lg">🗺️ Ruta tarde</a>` : ''}
+</div>
 <div class="space-y-2">${tarde.map(v => renderMobileVisitCard(v, pacientesMap)).join('')}</div>
 </div>`;
 }
@@ -1083,20 +1184,21 @@ return `<div class="border ${turnoColor} rounded-xl p-3 cursor-pointer hover:sha
 ${v.recurrente ? '<span class="text-xs text-slate-400" title="Recurrente">🔁</span>' : '<span class="text-xs text-indigo-500" title="Visita puntual">📌</span>'}
 </div>
 <div class="flex items-center gap-1">
-<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${p.empresa || 'Sin empresa'}</span>
+<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 ${p.usaOpioides==='Sí' ? '<span class="text-xs" title="Usa opioides">💊</span>' : ''}
 </div>
 </div>
 <p class="text-sm font-bold text-slate-800 leading-tight">${esc(p.nombre)}</p>
-<p class="text-xs text-slate-500 mt-0.5">${edad !== null ? edad + ' años · ' : ''}${p.obraSocial || ''}</p>
+<p class="text-xs text-slate-500 mt-0.5">${edad !== null ? edad + ' años · ' : ''}${esc(p.obraSocial || '')}</p>
 <p class="text-xs text-slate-600 mt-2 flex items-start gap-1">
 <span class="flex-shrink-0">🏠</span>
-<span>${esc(p.direccion || '-')}${p.piso ? ' · ' + p.piso : ''}</span>
+<span>${esc(p.direccion || '-')}${p.piso ? ' · ' + esc(p.piso) : ''}</span>
 </p>
 ${p.contacto ? `<p class="text-xs text-slate-600 mt-0.5 flex items-start gap-1"><span class="flex-shrink-0">📞</span><span>${esc(p.contacto)}</span></p>` : ''}
 ${v.notasAgenda ? `<p class="text-xs text-slate-500 mt-2 italic bg-white/50 rounded px-2 py-1">📝 ${esc(v.notasAgenda)}</p>` : ''}
 <div class="flex gap-2 mt-3">
 <button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium py-2 rounded-lg">✓ Evolucionar</button>
+${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg flex items-center justify-center">📍</a>` : ''}
 <button data-action="edit-agenda" data-id="${v.id}" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg">✏️</button>
 </div>
 </div>`;
@@ -1137,8 +1239,8 @@ conVisita = conVisita.filter(p => p.empresa === filtroPendingEmpresa);
 }
 
 const ordenados = [
-...pendientes.sort((a,b) => a.nombre.localeCompare(b.nombre)),
-...conVisita.sort((a,b) => a.nombre.localeCompare(b.nombre))
+...pendientes.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''))),
+...conVisita.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')))
 ];
 
 const { lunes, sabado } = getWeekRange(weekOffset);
@@ -1167,17 +1269,19 @@ const empColor = getEmpresaColor(p.empresa);
 
 html += `<div class="pending-item ${done ? 'done' : ''} flex items-center gap-3 p-3 hover:bg-slate-50 transition ${done ? '' : 'cursor-pointer'}" ${done ? '' : `data-action="add-agenda-paciente-pending" data-id="${p.id}"`}>
 <div class="flex-shrink-0 w-8 h-8 rounded-full ${done ? 'bg-brand-100 text-brand-700' : 'bg-amber-100 text-amber-700'} flex items-center justify-center text-xs font-bold">
-${done ? '✓' : p.nombre.charAt(0).toUpperCase()}
+${done ? '✓' : String(p.nombre||'?').charAt(0).toUpperCase()}
 </div>
 <div class="flex-1 min-w-0">
 <p class="pending-name text-sm font-medium text-slate-800 truncate">${esc(p.nombre)}</p>
 <p class="text-xs text-slate-500 truncate flex items-center gap-1">
 <span class="flex-shrink-0">🏠</span>
-<span class="truncate">${esc(p.direccion || 'Sin dirección')}${p.piso ? ' · ' + p.piso : ''}</span>
+<span class="truncate">${esc(p.direccion || 'Sin dirección')}${p.piso ? ' · ' + esc(p.piso) : ''}</span>
+${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="flex-shrink-0 text-brand-500 hover:text-brand-700" title="Cómo llegar">📍</a>` : ''}
 </p>
+<div class="mt-1">${chipUltimaVisita(p.id)}</div>
 </div>
 <div class="flex-shrink-0 flex flex-col items-end gap-1">
-<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${p.empresa || 'Sin empresa'}</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 ${done
 ? `<span class="text-[10px] text-slate-400">${nVisitas} visita${nVisitas>1?'s':''}</span>`
 : `<span class="text-xs text-brand-600 font-medium whitespace-nowrap">+ Agendar</span>`}
@@ -1272,19 +1376,20 @@ return `<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${filt
 const edad = calcEdad(p.fechaNacimiento);
 const estadoColor = p.estado==='Activo'?'bg-brand-100 text-brand-700 border-brand-200':p.estado==='Intermitente'?'bg-amber-100 text-amber-700 border-amber-200':'bg-slate-100 text-slate-500 border-slate-200';
 const { agenda: vAg, evoluciones: nEv } = contarAgendaEvoluciones(p.id);
-const osBadge = osNoRequiereFirma(p.obraSocial) ? `<span class="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">📋 ${p.obraSocial}</span>` : '';
+const osBadge = osNoRequiereFirma(p.obraSocial) ? `<span class="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded">📋 ${esc(p.obraSocial)}</span>` : '';
 const empColor = getEmpresaColor(p.empresa);
 
 return `<div class="bg-white rounded-2xl border border-slate-200 p-5 hover:shadow-md transition cursor-pointer" data-action="ver-paciente" data-id="${p.id}">
 <div class="flex items-start justify-between gap-3 mb-3">
-<div class="flex-1 min-w-0"><h3 class="font-bold text-slate-800 truncate">${esc(p.nombre)}</h3><p class="text-xs text-slate-500">${p.dni||'Sin DNI'} ${edad!==null?'· '+edad+' años':''}</p></div>
+<div class="flex-1 min-w-0"><h3 class="font-bold text-slate-800 truncate">${esc(p.nombre)}</h3><p class="text-xs text-slate-500">${esc(p.dni||'Sin DNI')} ${edad!==null?'· '+edad+' años':''}</p></div>
 <span class="text-xs font-medium px-2 py-1 rounded-full border ${estadoColor} whitespace-nowrap">${p.estado}</span>
 </div>
+${p.estado !== 'Fuera de seguimiento' ? `<div class="flex flex-wrap items-center gap-1.5 mb-3">${chipUltimaVisita(p.id)}${chipsChecklistAdmin(p)}</div>` : ''}
 <div class="space-y-1.5 text-xs text-slate-600">
-<p class="truncate">🏠 ${esc(p.direccion||'-')} ${p.piso?'· '+p.piso:''}</p>
+<p class="truncate">🏠 ${esc(p.direccion||'-')} ${p.piso?'· '+esc(p.piso):''}</p>
 <p class="truncate flex items-center gap-2">
-<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${p.empresa || 'Sin empresa'}</span>
-<span>${p.obraSocial||'-'}</span> ${p.numeroAfiliado?'· '+p.numeroAfiliado:''}
+<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
+<span>${esc(p.obraSocial||'-')}</span> ${p.numeroAfiliado?'· '+esc(p.numeroAfiliado):''}
 </p>
 <p class="truncate">📞 ${esc(p.contacto||'-')}</p>
 </div>
@@ -1306,6 +1411,7 @@ return `<div class="bg-white rounded-2xl shadow-sm border border-slate-200 overf
 <th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase hidden lg:table-cell">Dirección</th>
 <th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase hidden md:table-cell">Empresa / OS</th>
 <th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase">Estado</th>
+<th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase hidden sm:table-cell">Última visita</th>
 <th class="text-center px-4 py-3 text-xs font-semibold text-slate-600 uppercase hidden sm:table-cell">🔁</th>
 <th class="text-center px-4 py-3 text-xs font-semibold text-slate-600 uppercase hidden sm:table-cell">📝</th>
 </tr>
@@ -1320,23 +1426,24 @@ const empColor = getEmpresaColor(p.empresa);
 return `<tr class="lista-row cursor-pointer hover:bg-slate-50" data-action="ver-paciente" data-id="${p.id}">
 <td class="px-4 py-3">
 <div class="flex items-center gap-2">
-<div class="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold flex-shrink-0">${p.nombre.charAt(0).toUpperCase()}</div>
+<div class="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold flex-shrink-0">${String(p.nombre||'?').charAt(0).toUpperCase()}</div>
 <div class="min-w-0">
 <p class="font-semibold text-slate-800 truncate">${esc(p.nombre)}</p>
-<p class="text-[11px] text-slate-500 truncate md:hidden">${p.dni||''}${edad?' · '+edad+'a':''} · ${p.obraSocial||''}</p>
+<p class="text-[11px] text-slate-500 truncate md:hidden">${esc(p.dni||'')}${edad?' · '+edad+'a':''} · ${esc(p.obraSocial||'')}</p>
 </div>
 ${p.usaOpioides==='Sí' ? '<span class="text-xs" title="Usa opioides">💊</span>' : ''}
 </div>
 </td>
-<td class="px-4 py-3 text-xs text-slate-600 hidden md:table-cell">${p.dni||'-'}${edad!==null?'<br><span class="text-slate-400">'+edad+' años</span>':''}</td>
-<td class="px-4 py-3 text-xs text-slate-600 hidden lg:table-cell max-w-[200px] truncate" title="${(p.direccion||'')+(p.piso?' · '+p.piso:'')}">${esc(p.direccion||'-')}${p.piso?' · '+p.piso:''}</td>
+<td class="px-4 py-3 text-xs text-slate-600 hidden md:table-cell">${esc(p.dni||'-')}${edad!==null?'<br><span class="text-slate-400">'+edad+' años</span>':''}</td>
+<td class="px-4 py-3 text-xs text-slate-600 hidden lg:table-cell max-w-[200px] truncate" title="${esc((p.direccion||'')+(p.piso?' · '+p.piso:''))}">${esc(p.direccion||'-')}${p.piso?' · '+esc(p.piso):''}</td>
 <td class="px-4 py-3 text-xs hidden md:table-cell">
 <div class="flex flex-col gap-1">
-<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium w-fit ${empColor}">${p.empresa || 'Sin empresa'}</span>
-<span class="text-slate-700">${p.obraSocial||'-'}</span>
+<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium w-fit ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
+<span class="text-slate-700">${esc(p.obraSocial||'-')}</span>
 </div>
 </td>
 <td class="px-4 py-3"><span class="text-[11px] font-medium px-2 py-0.5 rounded-full ${estadoColor}">${p.estado}</span></td>
+<td class="px-4 py-3 hidden sm:table-cell">${p.estado !== 'Fuera de seguimiento' ? chipUltimaVisita(p.id) : ''}</td>
 <td class="px-4 py-3 text-center text-xs text-slate-600 hidden sm:table-cell">${vAg}</td>
 <td class="px-4 py-3 text-center text-xs text-slate-600 hidden sm:table-cell">${nEv}</td>
 </tr>`;
@@ -1374,8 +1481,8 @@ const noFirma = osNoRequiereFirma(p?.obraSocial);
 return `<div class="bg-white rounded-2xl border border-slate-200 p-5 hover:shadow-sm transition">
 <div class="flex flex-wrap items-start justify-between gap-3 mb-3">
 <div class="flex items-center gap-3">
-<div class="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-sm">${(p?.nombre||'?').charAt(0).toUpperCase()}</div>
-<div><h4 class="font-semibold text-slate-800">${p?.nombre||'Paciente eliminado'}</h4><p class="text-xs text-slate-500">📅 ${fmtFecha(e.fechaVisita)} ${p?.obraSocial ? '· '+p.obraSocial : ''}</p></div>
+<div class="w-10 h-10 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-sm">${String(p?.nombre||'?').charAt(0).toUpperCase()}</div>
+<div><h4 class="font-semibold text-slate-800">${esc(p?.nombre||'Paciente eliminado')}</h4><p class="text-xs text-slate-500">📅 ${fmtFecha(e.fechaVisita)} ${p?.obraSocial ? '· '+esc(p.obraSocial) : ''}</p></div>
 </div>
 <div class="flex gap-2">
 <span class="text-xs px-2 py-1 rounded-full ${e.evolucionoSistema?'bg-brand-100 text-brand-700':'bg-slate-100 text-slate-500'}">${e.evolucionoSistema?'✓ Sistema':'○ Sistema'}</span>
@@ -1492,24 +1599,26 @@ const empColor = getEmpresaColor(p.empresa);
 document.getElementById('detalle-content').innerHTML = `
 <div class="flex flex-wrap items-start justify-between gap-4 mb-5 pb-5 border-b border-slate-100">
 <div class="flex items-center gap-4">
-<div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 text-white flex items-center justify-center text-2xl font-bold">${p.nombre.charAt(0).toUpperCase()}</div>
+<div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 text-white flex items-center justify-center text-2xl font-bold">${String(p.nombre||'?').charAt(0).toUpperCase()}</div>
 <div>
 <h3 class="text-xl font-bold text-slate-800">${esc(p.nombre)}</h3>
-<p class="text-sm text-slate-500">${p.dni||'Sin DNI'} ${edad!==null?'· '+edad+' años':''}</p>
+<p class="text-sm text-slate-500">${esc(p.dni||'Sin DNI')} ${edad!==null?'· '+edad+' años':''}</p>
 <div class="flex gap-2 mt-1">
 <span class="inline-block text-xs font-medium px-2 py-0.5 rounded-full bg-brand-100 text-brand-700">${p.estado}</span>
-<span class="inline-block text-xs font-medium px-2 py-0.5 rounded-full ${empColor}">${p.empresa || 'Sin empresa'}</span>
+<span class="inline-block text-xs font-medium px-2 py-0.5 rounded-full ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 </div>
+${p.estado !== 'Fuera de seguimiento' ? `<div class="flex flex-wrap gap-1.5 mt-2">${chipUltimaVisita(p.id)}${chipsChecklistAdmin(p)}</div>` : ''}
 </div>
 </div>
 <div class="flex gap-2">
+${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 flex items-center gap-1">📍 Cómo llegar</a>` : ''}
 <button data-action="edit-paciente" data-id="${p.id}" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700">✏️ Editar</button>
 <button data-action="delete-paciente" data-id="${p.id}" class="px-3 py-2 bg-rose-50 hover:bg-rose-100 rounded-lg text-sm font-medium text-rose-600">🗑️ Eliminar</button>
 </div>
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-<div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Datos personales</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Dirección:</span> <strong>${esc(p.direccion||'-')}</strong> ${p.piso?'· '+p.piso:''}</p><p><span class="text-slate-500">Nacimiento:</span> <strong>${fmtFecha(p.fechaNacimiento)}</strong></p><p><span class="text-slate-500">Contacto:</span> <strong>${esc(p.contacto||'-')}</strong></p></div></div>
-<div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Cobertura</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Obra Social:</span> <strong>${p.obraSocial||'-'}</strong> ${noFirma?'<span class="ml-1 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">No requiere planilla</span>':''}</p><p><span class="text-slate-500">Nº Afiliado:</span> <strong>${p.numeroAfiliado||'-'}</strong></p><p><span class="text-slate-500">Opioides:</span> <strong class="${p.usaOpioides==='Sí'?'text-amber-600':'text-slate-700'}">${p.usaOpioides}</strong></p></div></div>
+<div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Datos personales</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Dirección:</span> <strong>${esc(p.direccion||'-')}</strong> ${p.piso?'· '+esc(p.piso):''}</p><p><span class="text-slate-500">Nacimiento:</span> <strong>${fmtFecha(p.fechaNacimiento)}</strong></p><p><span class="text-slate-500">Contacto:</span> <strong>${esc(p.contacto||'-')}</strong></p></div></div>
+<div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Cobertura</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Obra Social:</span> <strong>${esc(p.obraSocial||'-')}</strong> ${noFirma?'<span class="ml-1 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">No requiere planilla</span>':''}</p><p><span class="text-slate-500">Nº Afiliado:</span> <strong>${esc(p.numeroAfiliado||'-')}</strong></p><p><span class="text-slate-500">Opioides:</span> <strong class="${p.usaOpioides==='Sí'?'text-amber-600':'text-slate-700'}">${p.usaOpioides}</strong></p></div></div>
 </div>
 <div class="mb-5"><div class="flex items-center justify-between mb-3"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Agenda (${ags.length})</h4><button data-action="add-agenda-paciente" data-id="${p.id}" class="text-xs bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Agendar</button></div>${ags.length===0?'<p class="text-sm text-slate-400 italic">Sin visitas agendadas</p>':`<div class="space-y-2">${ags.map(a=>{const hora=a.horaInicio||'--:--';const rec=a.recurrente!==false;const libre=addMinutes(hora,BLOQUE_TOTAL);const tipo=rec?'<span class="text-[10px] text-brand-600">🔁 recurrente</span>':'<span class="text-[10px] text-indigo-600">📌 puntual</span>';return `<div class="bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 text-xs flex items-center justify-between"><div><strong class="text-brand-800">${a.diaSemana}</strong> · <span class="time-badge">${hora} - ${libre}</span> ${tipo}${a.notasAgenda?`<p class="text-slate-600 mt-0.5 italic">📝 ${esc(a.notasAgenda)}</p>`:''}</div><button data-action="edit-agenda" data-id="${a.id}" class="text-slate-500 hover:text-slate-700">✏️</button></div>`;}).join('')}</div>`}</div>
 <div><div class="flex items-center justify-between mb-3"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Historia clínica (${evs.length})</h4><button data-action="new-evolucion-paciente" data-id="${p.id}" class="text-xs bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Nueva evolución</button></div>${evs.length===0?'<p class="text-sm text-slate-400 italic">Sin evoluciones</p>':`<div class="space-y-3">${evs.map(e=>{const firmaBadge = noFirma ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">📋 N/A</span>' : `<span class="text-[10px] px-1.5 py-0.5 rounded ${e.firmoPlanillaOS?'bg-brand-100 text-brand-700':'bg-slate-200 text-slate-500'}">${e.firmoPlanillaOS?'✓ Firma':'○ Firma'}</span>`;return `<div class="bg-slate-50 border border-slate-200 rounded-xl p-4"><div class="flex items-center justify-between mb-2"><p class="text-xs font-semibold text-slate-700">📅 ${fmtFecha(e.fechaVisita)}</p><div class="flex gap-1.5"><span class="text-[10px] px-1.5 py-0.5 rounded ${e.evolucionoSistema?'bg-brand-100 text-brand-700':'bg-slate-200 text-slate-500'}">${e.evolucionoSistema?'✓ Sist.':'○ Sist.'}</span>${firmaBadge}</div></div><p class="text-sm text-slate-700 whitespace-pre-wrap">${e.notas ? esc(e.notas) : '<em class="text-slate-400">Sin notas</em>'}</p></div>`;}).join('')}</div>`}</div>`;
@@ -1579,8 +1688,8 @@ fechaInput.dataset.lastDia = '';
 const sel = document.getElementById('ag-paciente');
 sel.innerHTML = state.pacientes
 .filter(p => p.estado !== 'Fuera de seguimiento')
-.sort((a,b) => a.nombre.localeCompare(b.nombre))
-.map(p => `<option value="${String(p.id)}">${esc(p.nombre)} ${p.empresa ? '('+p.empresa+')' : ''} ${p.usaOpioides==='Sí'?'💊':''}</option>`)
+.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')))
+.map(p => `<option value="${String(p.id)}">${esc(p.nombre)} ${p.empresa ? '('+esc(p.empresa)+')' : ''} ${p.usaOpioides==='Sí'?'💊':''}</option>`)
 .join('');
 
 if (id) {
@@ -1710,7 +1819,7 @@ if (!p) { toast('Paciente no encontrado','error'); return; }
 
 document.getElementById('ev-pacienteId').value = p.id;
 const edad = calcEdad(p.fechaNacimiento);
-document.getElementById('ev-paciente-info').innerHTML = `<div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-brand-600 text-white flex items-center justify-center font-bold">${p.nombre.charAt(0).toUpperCase()}</div><div class="flex-1"><p class="font-semibold text-brand-900">${esc(p.nombre)}</p><p class="text-xs text-brand-700">${p.dni||''} ${edad!==null?'· '+edad+' años':''} ${p.usaOpioides==='Sí'?'· 💊 Opioides':''} · 🏥 ${p.obraSocial||'-'}</p></div></div>${p.direccion?`<p class="text-xs text-brand-700 mt-2">🏠 ${esc(p.direccion)} ${p.piso?'· '+p.piso:''}</p>`:''}${p.contacto?`<p class="text-xs text-brand-700">📞 ${esc(p.contacto)}</p>`:''}`;
+document.getElementById('ev-paciente-info').innerHTML = `<div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-brand-600 text-white flex items-center justify-center font-bold">${String(p.nombre||'?').charAt(0).toUpperCase()}</div><div class="flex-1"><p class="font-semibold text-brand-900">${esc(p.nombre)}</p><p class="text-xs text-brand-700">${esc(p.dni||'')} ${edad!==null?'· '+edad+' años':''} ${p.usaOpioides==='Sí'?'· 💊 Opioides':''} · 🏥 ${esc(p.obraSocial||'-')}</p></div></div>${p.direccion?`<p class="text-xs text-brand-700 mt-2">🏠 ${esc(p.direccion)} ${p.piso?'· '+esc(p.piso):''}</p>`:''}${p.contacto?`<p class="text-xs text-brand-700">📞 ${esc(p.contacto)}</p>`:''}`;
 
 document.getElementById('ev-fecha').value = fechaPrefill || new Date().toISOString().slice(0,10);
 const noFirma = osNoRequiereFirma(p.obraSocial);
@@ -1808,7 +1917,16 @@ s = String(s).trim();
 let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
 if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
 m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-if (m) { let y = m[3]; if (y.length === 2) y = '19' + y; return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`; }
+if (m) {
+let y = m[3];
+if (y.length === 2) {
+// Pivote: años de 2 dígitos 00-29 se interpretan como 20XX, 30-99 como 19XX.
+// (antes siempre se asumía 19XX, lo que ponía mal a cualquier paciente con
+// una fecha de 2 dígitos que en realidad fuera de los 2000 en adelante)
+y = (parseInt(y, 10) <= 29 ? '20' : '19') + y;
+}
+return `${y}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+}
 return '';
 }
 
@@ -1877,7 +1995,7 @@ document.getElementById('csv-step1').classList.add('hidden');
 document.getElementById('csv-step2').classList.remove('hidden');
 const mapDiv = document.getElementById('csv-mapping');
 mapDiv.innerHTML = FIELD_MAP.map(f => {
-const opts = ['<option value="">— sin asignar —</option>'].concat(csvState.headers.map((h, i) => `<option value="${i}" ${csvState.mapping[f.key]===i?'selected':''}>${h}</option>`)).join('');
+const opts = ['<option value="">— sin asignar —</option>'].concat(csvState.headers.map((h, i) => `<option value="${i}" ${csvState.mapping[f.key]===i?'selected':''}>${esc(h)}</option>`)).join('');
 return `<div class="flex items-center gap-2 p-2 rounded-lg border border-slate-200"><label class="text-xs font-medium text-slate-700 w-32 flex-shrink-0">${f.label}${f.required?' <span class="text-rose-500">*</span>':''}</label><select data-field="${f.key}" class="csv-map-select flex-1 px-2 py-1.5 rounded border border-slate-200 text-xs">${opts}</select></div>`;
 }).join('');
 mapDiv.querySelectorAll('.csv-map-select').forEach(sel => {
@@ -1897,7 +2015,7 @@ const previewRows = csvState.rows.slice(0, 10);
 const mappedKeys = Object.keys(csvState.mapping);
 const ths = mappedKeys.map(k => { const f = FIELD_MAP.find(x => x.key === k); return `<th class="text-left text-[10px] font-semibold text-slate-600">${f.label}</th>`; }).join('');
 const rows = previewRows.map(r => {
-const tds = mappedKeys.map(k => { const idx = csvState.mapping[k]; return `<td>${r[idx] || ''}</td>`; }).join('');
+const tds = mappedKeys.map(k => { const idx = csvState.mapping[k]; return `<td>${esc(r[idx] || '')}</td>`; }).join('');
 return `<tr>${tds}</tr>`;
 }).join('');
 table.innerHTML = `<thead><tr>${ths}</tr></thead><tbody>${rows}</tbody>`;
