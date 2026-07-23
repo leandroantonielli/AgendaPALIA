@@ -81,6 +81,9 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <button data-view="visitas" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition-all">
 <span class="text-lg">📝</span> Registro de Visitas
 </button>
+<button data-view="planilla" class="nav-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-slate-600 hover:bg-slate-50 transition-all">
+<span class="text-lg">📊</span> Planilla de visitas
+</button>
 </nav>
 <div class="p-4 border-t border-slate-100 space-y-2 flex-shrink-0">
 <button id="btn-sync-now" class="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-50 rounded-lg transition">
@@ -111,6 +114,7 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <button data-view="agenda" class="nav-btn active flex-shrink-0 px-3 py-2 rounded-lg text-xs font-medium">📅 Agenda</button>
 <button data-view="pacientes" class="nav-btn flex-shrink-0 px-3 py-2 rounded-lg text-xs font-medium text-slate-600">👥 Pacientes</button>
 <button data-view="visitas" class="nav-btn flex-shrink-0 px-3 py-2 rounded-lg text-xs font-medium text-slate-600">📝 Visitas</button>
+<button data-view="planilla" class="nav-btn flex-shrink-0 px-3 py-2 rounded-lg text-xs font-medium text-slate-600">📊 Planilla</button>
 <button id="btn-import-csv-mobile" class="flex-shrink-0 px-3 py-2 rounded-lg text-xs font-medium text-emerald-700">📊 CSV</button>
 </nav>
 <div class="flex-1 overflow-auto">
@@ -201,6 +205,30 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <input id="search-visitas" type="text" placeholder="Buscar en evoluciones..." class="px-4 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
 </div>
 <div id="visitas-list" class="space-y-3"></div>
+</section>
+<!-- ============ PLANILLA DE VISITAS ============ -->
+<section id="view-planilla" class="view p-4 md:p-8 fade-in">
+<div class="flex items-center justify-between gap-3 mb-6">
+<button id="btn-prev-month" class="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600">←</button>
+<div class="text-center">
+<h2 class="text-lg font-bold text-slate-800" id="planilla-mes-label">Mes actual</h2>
+<p class="text-xs text-slate-500">Visitas evolucionadas y firmadas</p>
+</div>
+<button id="btn-next-month" class="w-9 h-9 rounded-lg bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-600">→</button>
+</div>
+<div id="planilla-cards" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2"></div>
+<p class="text-xs text-slate-400 mb-6">💡 El valor por visita se guarda solo, no hace falta cargarlo cada mes.</p>
+<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mb-4">
+<div class="flex flex-wrap gap-3 items-center">
+<select id="planilla-filter-empresa" class="px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
+<option value="">Todas las empresas</option>
+</select>
+<label class="flex items-center gap-2 text-sm text-slate-600 px-2">
+<input id="planilla-solo-pendientes" type="checkbox" class="w-4 h-4 accent-brand-600"> Solo pendientes
+</label>
+</div>
+</div>
+<div id="planilla-table-wrap" class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden"></div>
 </section>
 </div>
 </main>
@@ -329,6 +357,34 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 </div>
 </div>
 
+<!-- MODAL MOVER VISITA -->
+<div id="modal-mover" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+<div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+<div class="p-5 border-b border-slate-100 flex items-center justify-between">
+<h3 class="text-lg font-bold text-slate-800">↪️ Mover visita</h3>
+<button class="modal-close text-slate-400 hover:text-slate-600 text-2xl leading-none">&times;</button>
+</div>
+<form id="form-mover" class="p-5 space-y-4">
+<input type="hidden" id="mover-id">
+<p class="text-xs text-slate-500" id="mover-info"></p>
+<div><label class="block text-xs font-semibold text-slate-600 mb-1">Nuevo día</label>
+<select id="mover-dia" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
+<option>Lunes</option><option>Martes</option><option>Miércoles</option>
+<option>Jueves</option><option>Viernes</option><option>Sábado</option>
+</select>
+</div>
+<div><label class="block text-xs font-semibold text-slate-600 mb-1">Nueva hora</label>
+<input id="mover-hora" type="time" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
+</div>
+<p class="text-[11px] text-slate-400">Solo mueve esta semana. La visita recurrente sigue apareciendo normalmente la semana que viene.</p>
+<div class="flex justify-end gap-2 pt-2">
+<button type="button" class="modal-close px-4 py-2 rounded-lg text-sm font-medium text-slate-600 hover:bg-slate-100">Cancelar</button>
+<button type="submit" class="bg-brand-600 hover:bg-brand-700 text-white px-5 py-2 rounded-lg text-sm font-medium">Mover</button>
+</div>
+</form>
+</div>
+</div>
+
 <!-- MODAL CONFIG -->
 <div id="modal-config" class="hidden fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
 <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -431,6 +487,7 @@ const KEYS = {
 pacientes: 'paliativos_pacientes',
 agenda: 'paliativos_agenda',
 evoluciones: 'paliativos_evoluciones',
+tarifas: 'paliativos_tarifas',
 config: 'paliativos_config',
 lastSync: 'paliativos_last_sync',
 pendingChanges: 'paliativos_pending',
@@ -441,6 +498,7 @@ const state = {
 pacientes: [],
 agenda: [],
 evoluciones: [],
+tarifas: [],
 config: { apiUrl: '', apiToken: '' },
 lastSync: null,
 pendingChanges: [],
@@ -461,6 +519,7 @@ function saveLocal() {
 localStorage.setItem(KEYS.pacientes, JSON.stringify(state.pacientes));
 localStorage.setItem(KEYS.agenda, JSON.stringify(state.agenda));
 localStorage.setItem(KEYS.evoluciones, JSON.stringify(state.evoluciones));
+localStorage.setItem(KEYS.tarifas, JSON.stringify(state.tarifas));
 localStorage.setItem(KEYS.config, JSON.stringify(state.config));
 localStorage.setItem(KEYS.lastSync, state.lastSync || '');
 localStorage.setItem(KEYS.pendingChanges, JSON.stringify(state.pendingChanges));
@@ -475,6 +534,7 @@ const rawAgenda = JSON.parse(localStorage.getItem(KEYS.agenda) || '[]');
 state.agenda = rawAgenda.map(a => ({ ...a, id: String(a.id).trim(), pacienteId: String(a.pacienteId).trim() }));
 const rawEvoluciones = JSON.parse(localStorage.getItem(KEYS.evoluciones) || '[]');
 state.evoluciones = rawEvoluciones.map(e => ({ ...e, id: String(e.id).trim(), pacienteId: String(e.pacienteId).trim() }));
+state.tarifas = JSON.parse(localStorage.getItem(KEYS.tarifas) || '[]');
 state.config = JSON.parse(localStorage.getItem(KEYS.config) || '{"apiUrl":"","apiToken":""}');
 state.lastSync = localStorage.getItem(KEYS.lastSync) || null;
 state.pendingChanges = JSON.parse(localStorage.getItem(KEYS.pendingChanges) || '[]');
@@ -606,6 +666,9 @@ async function syncWithSheets() {
     if (data.evoluciones && Array.isArray(data.evoluciones)) {
       state.evoluciones = data.evoluciones.map(e => ({ ...e, id: String(e.id || '').trim(), pacienteId: String(e.pacienteId || '').trim() }));
     }
+    if (data.tarifas && Array.isArray(data.tarifas)) {
+      state.tarifas = data.tarifas.map(t => ({ ...t, empresa: String(t.empresa || '').trim() }));
+    }
 
     state.lastSync = new Date().toISOString();
     saveLocal();
@@ -695,6 +758,17 @@ async function pushDelete(sheetName, id) {
 if (!state.config.apiUrl || !state.config.apiToken) { queueChange('deleteRow', { sheet: sheetName, id }); return; }
 try { await apiCall('POST', { action: 'deleteRow', sheet: sheetName, id, token: state.config.apiToken }); }
 catch (err) { queueChange('deleteRow', { sheet: sheetName, id }); }
+}
+
+// Tarifas no tiene un "id" propio: cada fila se identifica por "empresa".
+// Le agregamos un alias id=empresa solo para que la cola de pendientes (queueChange)
+// pueda deduplicar correctamente; ese campo extra se ignora del lado del servidor
+// (la hoja Tarifas solo tiene columnas empresa/valorPorVisita).
+async function pushTarifa(row) {
+const payload = { ...row, id: row.empresa };
+if (!state.config.apiUrl || !state.config.apiToken) { queueChange('upsertTarifa', { sheet: 'Tarifas', row: payload }); return; }
+try { await apiCall('POST', { action: 'upsertTarifa', row: payload, token: state.config.apiToken }); }
+catch (err) { console.error(err); queueChange('upsertTarifa', { sheet: 'Tarifas', row: payload }); }
 }
 
 /* ============================================================
@@ -868,7 +942,12 @@ function diasDesdeUltimaVisita(pacienteId) {
     if (e.pacienteId !== pacienteId || !e.fechaVisita) return;
     if (!ultima || e.fechaVisita > ultima) ultima = e.fechaVisita;
   });
-  if (!ultima) return null; // nunca se le cargó una evolución
+  // También cuenta las marcas manuales de "hecha" (para quien no suele cargar evoluciones)
+  state.agenda.forEach(a => {
+    if (a.pacienteId !== pacienteId || !a.fechasHechas) return;
+    a.fechasHechas.forEach(f => { if (!ultima || f > ultima) ultima = f; });
+  });
+  if (!ultima) return null; // nunca se le cargó una evolución ni se marcó nada a mano
   const hoy = new Date(); hoy.setHours(0,0,0,0);
   const f = new Date(ultima + 'T00:00:00');
   const dias = Math.round((hoy - f) / (24*60*60*1000));
@@ -887,6 +966,32 @@ function chipUltimaVisita(pacienteId) {
 /* ============================================================
 CHECKLIST ADMINISTRATIVO: estado de la última evolución cargada
 ============================================================ */
+/* ============================================================
+"HECHA" / "MOVIDA": marcas automáticas sobre la tarjeta de visita
+============================================================ */
+// true si existe una evolución cargada para ese paciente en esa fecha exacta.
+function visitaHecha(pacienteId, fecha) {
+if (!fecha) return false;
+return state.evoluciones.some(e => sameId(e.pacienteId, pacienteId) && String(e.fechaVisita||'').trim() === fecha);
+}
+function chipHecha() {
+return '<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-brand-100 text-brand-700 whitespace-nowrap">✅ Hecha</span>';
+}
+// Combina las dos fuentes de "esto pasó": una evolución cargada, o una marca manual
+// rápida (fechasHechas), para gente que no suele escribir evoluciones.
+function estadoHecha(v) {
+const porEvolucion = visitaHecha(v.pacienteId, v.fechaVisitaSemana);
+const manual = !porEvolucion && (v.fechasHechas||[]).includes(v.fechaVisitaSemana);
+return { hecha: porEvolucion || manual, manual };
+}
+function chipMovida(v) {
+const destino = v.movidoA;
+return `<div class="flex items-center justify-between gap-1 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1.5 mb-2 text-[10px] text-blue-700">
+<span>↪️ Pasó a ${esc(destino.dia)} ${destino.hora||''}</span>
+<button data-action="deshacer-movida" data-id="${v.id}" data-semana="${v.semanaMovidaKey||''}" class="text-blue-400 hover:text-blue-700" title="Deshacer">✕</button>
+</div>`;
+}
+
 function ultimaEvolucion(pacienteId) {
   let ultima = null;
   state.evoluciones.forEach(e => {
@@ -942,17 +1047,25 @@ state.agenda.forEach(a => {
 const hora = saneaHoraFront(a.horaInicio || '09:00');
 const rec = a.recurrente !== false;
 let aparece = false;
+let movidoA = null;
 if (rec) {
 const saltadas = a.semanasSaltadas || [];
-if (!saltadas.includes(lunesISO)) aparece = true;
+// Cada entrada de semanasSaltadas puede ser un string plano (salto manual, sin más info)
+// o un objeto { semana, movidoA } cuando el salto vino del botón "Mover".
+const saltadaEntry = saltadas.find(s => (typeof s === 'string' ? s : s.semana) === lunesISO);
+if (!saltadaEntry) {
+aparece = true;
+} else if (typeof saltadaEntry === 'object' && saltadaEntry.movidoA) {
+movidoA = saltadaEntry.movidoA;
+}
 } else {
 if (a.semanaEspecifica && String(a.semanaEspecifica).trim() === lunesISO) aparece = true;
 }
-if (!aparece) return;
 const diaIdx = DIA_IDX[a.diaSemana];
 if (diaIdx === undefined) return;
 const fecha = new Date(lunes);
 fecha.setDate(lunes.getDate() + diaIdx);
+if (aparece) {
 result.push({
 ...a,
 pacienteId: String(a.pacienteId).trim(),
@@ -961,8 +1074,22 @@ recurrente: rec,
 fechaVisitaSemana: isoDate(fecha),
 horaFinVisita: addMinutes(hora, DURACION_VISITA),
 horaLibre: addMinutes(hora, BLOQUE_TOTAL),
-turno: turnoDelDia(hora)
+turno: turnoDelDia(hora),
+movida: false
 });
+} else if (movidoA) {
+result.push({
+...a,
+pacienteId: String(a.pacienteId).trim(),
+horaInicio: hora,
+recurrente: rec,
+fechaVisitaSemana: isoDate(fecha),
+turno: turnoDelDia(hora),
+movida: true,
+movidoA,
+semanaMovidaKey: lunesISO
+});
+}
 });
 return result;
 }
@@ -998,16 +1125,20 @@ const fecha = new Date(lunes); fecha.setDate(lunes.getDate() + i);
 const fechaISO = isoDate(fecha);
 const isToday = fechaISO === hoyISO;
 const items = porDia[d];
+const realItems = items.filter(v => !v.movida);
+const movedItems = items.filter(v => v.movida);
 let html = `<div class="day-column p-2 ${isToday ? 'today-col' : 'bg-white'}">`;
 
-if (items.length === 0) {
+movedItems.forEach(v => { html += chipMovida(v); });
+
+if (realItems.length === 0) {
 html += `<button data-action="add-agenda" data-dia="${d}" class="w-full min-h-[80px] border-2 border-dashed border-slate-200 rounded-lg text-slate-300 hover:border-brand-300 hover:text-brand-500 text-xs transition flex items-center justify-center">+ visita</button>`;
 } else {
-const mañana = items.filter(v => v.turno === 'mañana').length;
-const tarde = items.filter(v => v.turno === 'tarde').length;
+const mañana = realItems.filter(v => v.turno === 'mañana').length;
+const tarde = realItems.filter(v => v.turno === 'tarde').length;
 if (mañana > 0 || tarde > 0) {
-const direccionesMañana = items.filter(v => v.turno === 'mañana').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
-const direccionesTarde = items.filter(v => v.turno === 'tarde').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
+const direccionesMañana = realItems.filter(v => v.turno === 'mañana').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
+const direccionesTarde = realItems.filter(v => v.turno === 'tarde').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
 const rutaMañana = mapsLinkRuta(direccionesMañana);
 const rutaTarde = mapsLinkRuta(direccionesTarde);
 html += `<div class="flex gap-1 mb-2 text-[9px]">
@@ -1016,7 +1147,7 @@ ${tarde > 0 ? (rutaTarde ? `<a href="${rutaTarde}" target="_blank" rel="noopener
 </div>`;
 }
 
-items.forEach(v => {
+realItems.forEach(v => {
 const p = pacientesMap.get(String(v.pacienteId).trim()) || null;
 if (!p) {
 html += `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2.5 mb-2">
@@ -1032,6 +1163,8 @@ return;
 const edad = calcEdad(p.fechaNacimiento);
 const turnoColor = v.turno === 'mañana' ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50 border-indigo-200';
 const empColor = getEmpresaColor(p.empresa);
+const puedeMarcarse = v.fechaVisitaSemana <= hoyISO;
+const estado = puedeMarcarse ? estadoHecha(v) : { hecha:false, manual:false };
 
 html += `<div class="visit-card bg-white border border-slate-200 rounded-lg p-2.5 mb-2 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
 <div class="flex items-start justify-between gap-1 mb-1.5">
@@ -1051,6 +1184,9 @@ ${p.usaOpioides==='Sí' ? '<span class="text-[10px]" title="Usa opioides">💊</
 <span class="text-[9px] px-1 py-0.5 rounded ${turnoColor} font-medium">${v.turno === 'mañana' ? '🌅' : '🌇'}</span>
 </div>
 </div>
+${estado.hecha
+? `<div class="mb-1 flex items-center gap-1">${chipHecha()}${estado.manual ? `<button data-action="desmarcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" title="Quitar marca" class="text-[9px] text-slate-300 hover:text-slate-500">✕</button>` : ''}</div>`
+: (puedeMarcarse ? `<button data-action="marcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="mb-1 text-[9px] px-1.5 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition">☐ Marcar hecha</button>` : '')}
 <div class="text-[10px] text-slate-500 space-y-0.5">
 <p>🏠 <span class="truncate">${esc(p.direccion || '-')}</span>${p.piso ? ' · '+esc(p.piso) : ''}</p>
 ${v.notasAgenda ? `<p class="italic">📝 ${esc(v.notasAgenda)}</p>` : ''}
@@ -1058,6 +1194,7 @@ ${v.notasAgenda ? `<p class="italic">📝 ${esc(v.notasAgenda)}</p>` : ''}
 <div class="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition">
 <button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-[10px] font-medium py-1 rounded">✓ Evolucionar</button>
 ${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Cómo llegar" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded flex items-center justify-center">📍</a>` : ''}
+<button data-action="abrir-mover" data-id="${v.id}" title="Mover a otro día" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">↪️</button>
 <button data-action="edit-agenda" data-id="${v.id}" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">✏️</button>
 </div>
 </div>`;
@@ -1091,7 +1228,7 @@ const visitas = getVisitasForWeek(weekOffset);
 const pacientesMap = new Map(state.pacientes.map(p => [String(p.id).trim(), p]));
 const countsByDia = {};
 DIAS.forEach(d => countsByDia[d] = 0);
-visitas.forEach(v => { if (countsByDia[v.diaSemana] !== undefined) countsByDia[v.diaSemana]++; });
+visitas.forEach(v => { if (!v.movida && countsByDia[v.diaSemana] !== undefined) countsByDia[v.diaSemana]++; });
 
 const tabs = document.getElementById('mobile-day-tabs');
 tabs.innerHTML = DIAS.map((d, i) => {
@@ -1108,7 +1245,9 @@ ${count > 0 ? `<span class="text-[9px] ${isActive ? 'text-white/80' : 'text-bran
 }).join('');
 
 const diaNombre = DIAS[selectedDayMobile];
-const items = visitas.filter(v => v.diaSemana === diaNombre).sort((a,b) => (a.horaInicio||'').localeCompare(b.horaInicio||''));
+const itemsDelDia = visitas.filter(v => v.diaSemana === diaNombre).sort((a,b) => (a.horaInicio||'').localeCompare(b.horaInicio||''));
+const items = itemsDelDia.filter(v => !v.movida);
+const movidas = itemsDelDia.filter(v => v.movida);
 const content = document.getElementById('mobile-day-content');
 const fecha = new Date(lunes); fecha.setDate(lunes.getDate() + selectedDayMobile);
 const fechaISO = isoDate(fecha);
@@ -1126,6 +1265,8 @@ let html = `<div class="flex items-center justify-between mb-4">
 <span>➕</span> Agregar
 </button>
 </div>`;
+
+movidas.forEach(v => { html += chipMovida(v); });
 
 if (items.length === 0) {
 html += `<div class="text-center py-8 text-slate-400">
@@ -1174,6 +1315,9 @@ return `<div class="border border-rose-200 bg-rose-50 rounded-xl p-3 mb-2">
 const edad = calcEdad(p.fechaNacimiento);
 const turnoColor = v.turno === 'mañana' ? 'border-amber-200 bg-amber-50/30' : 'border-indigo-200 bg-indigo-50/30';
 const empColor = getEmpresaColor(p.empresa);
+const hoyISOCard = isoDate(new Date());
+const puedeMarcarseCard = v.fechaVisitaSemana <= hoyISOCard;
+const estadoCard = puedeMarcarseCard ? estadoHecha(v) : { hecha:false, manual:false };
 
 return `<div class="border ${turnoColor} rounded-xl p-3 cursor-pointer hover:shadow-md transition" data-action="ver-agenda" data-id="${v.id}">
 <div class="flex items-start justify-between gap-2 mb-2">
@@ -1188,6 +1332,9 @@ ${v.recurrente ? '<span class="text-xs text-slate-400" title="Recurrente">🔁</
 ${p.usaOpioides==='Sí' ? '<span class="text-xs" title="Usa opioides">💊</span>' : ''}
 </div>
 </div>
+${estadoCard.hecha
+? `<div class="mb-1.5 flex items-center gap-1">${chipHecha()}${estadoCard.manual ? `<button data-action="desmarcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" title="Quitar marca" class="text-[10px] text-slate-300 hover:text-slate-500">✕</button>` : ''}</div>`
+: (puedeMarcarseCard ? `<button data-action="marcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="mb-1.5 text-[10px] px-2 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition">☐ Marcar hecha</button>` : '')}
 <p class="text-sm font-bold text-slate-800 leading-tight">${esc(p.nombre)}</p>
 <p class="text-xs text-slate-500 mt-0.5">${edad !== null ? edad + ' años · ' : ''}${esc(p.obraSocial || '')}</p>
 <p class="text-xs text-slate-600 mt-2 flex items-start gap-1">
@@ -1197,6 +1344,7 @@ ${p.usaOpioides==='Sí' ? '<span class="text-xs" title="Usa opioides">💊</span
 ${p.contacto ? `<p class="text-xs text-slate-600 mt-0.5 flex items-start gap-1"><span class="flex-shrink-0">📞</span><span>${esc(p.contacto)}</span></p>` : ''}
 ${v.notasAgenda ? `<p class="text-xs text-slate-500 mt-2 italic bg-white/50 rounded px-2 py-1">📝 ${esc(v.notasAgenda)}</p>` : ''}
 <div class="flex gap-2 mt-3">
+<button data-action="abrir-mover" data-id="${v.id}" title="Mover a otro día" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg flex items-center justify-center">↪️</button>
 <button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium py-2 rounded-lg">✓ Evolucionar</button>
 ${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg flex items-center justify-center">📍</a>` : ''}
 <button data-action="edit-agenda" data-id="${v.id}" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg">✏️</button>
@@ -1500,6 +1648,167 @@ function renderAll() {
 renderAgenda();
 renderPacientes();
 renderVisitas();
+renderPlanilla();
+}
+
+/* ============================================================
+PLANILLA DE VISITAS: conteo mensual por empresa + tarifas + tabla
+============================================================ */
+let monthOffset = 0;
+
+function getMonthRange(offset=0) {
+const now = new Date();
+const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+const year = d.getFullYear();
+const month = d.getMonth();
+let label = d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+label = label.charAt(0).toUpperCase() + label.slice(1);
+return { year, month, label };
+}
+
+function evolucionesDelMes(offset) {
+const { year, month } = getMonthRange(offset);
+return state.evoluciones.filter(e => {
+if (!e.fechaVisita) return false;
+const d = new Date(String(e.fechaVisita).trim() + 'T00:00:00');
+if (isNaN(d.getTime())) return false;
+return d.getFullYear() === year && d.getMonth() === month;
+});
+}
+
+function tarifaEmpresa(empresa) {
+const t = state.tarifas.find(x => x.empresa === empresa);
+return t ? (Number(t.valorPorVisita) || 0) : 0;
+}
+
+function guardarTarifa(empresa, valor) {
+const num = Number(valor) || 0;
+const idx = state.tarifas.findIndex(x => x.empresa === empresa);
+let row;
+if (idx >= 0) { state.tarifas[idx].valorPorVisita = num; row = state.tarifas[idx]; }
+else { row = { empresa, valorPorVisita: num }; state.tarifas.push(row); }
+saveLocal();
+pushTarifa(row);
+}
+
+function fmtMoneyARS(n) {
+return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
+}
+
+function renderPlanilla() {
+const { label } = getMonthRange(monthOffset);
+document.getElementById('planilla-mes-label').textContent = label;
+
+const pacientesMap = new Map(state.pacientes.map(p => [String(p.id).trim(), p]));
+const evs = evolucionesDelMes(monthOffset).map(e => ({ e, p: pacientesMap.get(String(e.pacienteId).trim()) || null }));
+
+// Empresas: todas las que aparecen en pacientes, más cualquiera con tarifa ya cargada
+// (por si en algún momento no queda ningún paciente activo de esa empresa)
+const empresasSet = new Set(state.pacientes.map(p => p.empresa).filter(Boolean));
+state.tarifas.forEach(t => { if (t.empresa) empresasSet.add(t.empresa); });
+const empresas = [...empresasSet].sort();
+
+// Conteo de visitas del mes por empresa
+const countsPorEmpresa = {};
+empresas.forEach(emp => countsPorEmpresa[emp] = 0);
+let sinEmpresa = 0;
+evs.forEach(({ p }) => {
+const emp = p?.empresa;
+if (emp && countsPorEmpresa[emp] !== undefined) countsPorEmpresa[emp]++;
+else sinEmpresa++;
+});
+
+// Tarjetas por empresa + total general
+const cardsCont = document.getElementById('planilla-cards');
+let totalGeneral = 0;
+let cardsHtml = empresas.map(emp => {
+const count = countsPorEmpresa[emp] || 0;
+const valor = tarifaEmpresa(emp);
+const total = count * valor;
+totalGeneral += total;
+const empColor = getEmpresaColor(emp);
+return `<div class="bg-white rounded-xl border border-slate-200 p-3">
+<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(emp)}</span>
+<p class="text-xl font-bold text-slate-800 mt-2">${count} <span class="text-xs font-normal text-slate-400">visitas</span></p>
+<div class="flex items-center gap-1 mt-2">
+<span class="text-[11px] text-slate-400">$</span>
+<input data-tarifa-empresa="${esc(emp)}" type="number" min="0" step="500" value="${valor}" class="w-full px-2 py-1 rounded-lg border border-slate-200 text-xs focus:outline-none focus:border-brand-500">
+</div>
+<p class="text-xs font-semibold text-brand-700 mt-1.5">${fmtMoneyARS(total)}</p>
+</div>`;
+}).join('');
+
+if (sinEmpresa > 0) {
+cardsHtml += `<div class="bg-white rounded-xl border border-slate-200 p-3">
+<span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600 border border-slate-200">Sin empresa</span>
+<p class="text-xl font-bold text-slate-800 mt-2">${sinEmpresa} <span class="text-xs font-normal text-slate-400">visitas</span></p>
+<p class="text-[11px] text-slate-400 mt-2">Cargá la empresa del paciente para facturar</p>
+</div>`;
+}
+
+cardsHtml += `<div class="bg-brand-600 rounded-xl p-3 text-white">
+<span class="text-[10px] font-medium opacity-80">Total del mes</span>
+<p class="text-xl font-bold mt-2">${evs.length} <span class="text-xs font-normal opacity-80">visitas</span></p>
+<p class="text-xs font-semibold mt-6">${fmtMoneyARS(totalGeneral)}</p>
+</div>`;
+
+cardsCont.innerHTML = cardsHtml;
+cardsCont.querySelectorAll('[data-tarifa-empresa]').forEach(inp => {
+inp.addEventListener('change', () => { guardarTarifa(inp.dataset.tarifaEmpresa, inp.value); renderPlanilla(); });
+});
+
+// Filtro de empresa (se reconstruyen solo las <option>, el <select> es fijo en el HTML,
+// así que el listener se engancha una sola vez en TOP ACTIONS, no acá)
+const selFiltro = document.getElementById('planilla-filter-empresa');
+const filtroEmpresaActual = selFiltro.value;
+selFiltro.innerHTML = '<option value="">Todas las empresas</option>' +
+empresas.map(emp => `<option value="${esc(emp)}" ${emp===filtroEmpresaActual?'selected':''}>${esc(emp)}</option>`).join('');
+selFiltro.value = filtroEmpresaActual;
+
+const soloPendientes = document.getElementById('planilla-solo-pendientes').checked;
+
+// Tabla de visitas del mes
+let filas = evs.filter(({ p }) => !filtroEmpresaActual || p?.empresa === filtroEmpresaActual);
+if (soloPendientes) {
+filas = filas.filter(({ e, p }) => {
+const noFirma = osNoRequiereFirma(p?.obraSocial);
+return !e.evolucionoSistema || (!noFirma && !e.firmoPlanillaOS);
+});
+}
+filas.sort((a, b) => String(b.e.fechaVisita||'').localeCompare(String(a.e.fechaVisita||'')));
+
+const wrap = document.getElementById('planilla-table-wrap');
+if (filas.length === 0) {
+wrap.innerHTML = `<div class="text-center py-12 text-slate-400"><p class="text-4xl mb-2">📭</p><p class="text-sm">Sin visitas para este filtro</p></div>`;
+} else {
+wrap.innerHTML = `<div class="overflow-x-auto">
+<table class="w-full text-sm">
+<thead class="bg-slate-50 border-b border-slate-200">
+<tr>
+<th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase">Fecha</th>
+<th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase">Paciente</th>
+<th class="text-left px-4 py-3 text-xs font-semibold text-slate-600 uppercase hidden sm:table-cell">Empresa</th>
+<th class="text-center px-4 py-3 text-xs font-semibold text-slate-600 uppercase">Sistema</th>
+<th class="text-center px-4 py-3 text-xs font-semibold text-slate-600 uppercase">Firma</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-slate-100">
+${filas.map(({ e, p }) => {
+const noFirma = osNoRequiereFirma(p?.obraSocial);
+const empColor = getEmpresaColor(p?.empresa);
+return `<tr class="hover:bg-slate-50">
+<td class="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">${fmtFechaCorta(e.fechaVisita)}</td>
+<td class="px-4 py-3 text-sm font-medium text-slate-800">${esc(p?.nombre || 'Paciente eliminado')}</td>
+<td class="px-4 py-3 hidden sm:table-cell"><span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p?.empresa || 'Sin empresa')}</span></td>
+<td class="px-4 py-3 text-center">${e.evolucionoSistema ? '<span class="text-brand-600">✅</span>' : '<span class="text-amber-600">⏳</span>'}</td>
+<td class="px-4 py-3 text-center">${noFirma ? '<span class="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">N/A</span>' : (e.firmoPlanillaOS ? '<span class="text-brand-600">✅</span>' : '<span class="text-amber-600">⏳</span>')}</td>
+</tr>`;
+}).join('')}
+</tbody>
+</table>
+</div>
+<div class="px-4 py-2 bg-slate-50 border-t border-slate-200 text-xs text-slate-500">${filas.length} visita${filas.length!==1?'s':''}</div>`;
+}
 }
 
 /* ============================================================
@@ -1673,7 +1982,14 @@ if (!a || a.recurrente === false) { section.classList.add('hidden'); return; }
 section.classList.remove('hidden');
 const saltadas = a.semanasSaltadas || [];
 if (saltadas.length === 0) list.innerHTML = '<p class="text-[11px] text-amber-700 italic">Sin semanas saltadas</p>';
-else list.innerHTML = saltadas.map(s => `<div class="flex items-center justify-between bg-white rounded px-2 py-1 border border-amber-200"><span class="text-xs text-amber-800">⏭️ Semana del ${fmtFechaCorta(s)}</span><button type="button" data-action="remove-salto" data-fecha="${s}" class="text-amber-600 hover:text-amber-800 text-xs">✕</button></div>`).join('');
+else list.innerHTML = saltadas.map(s => {
+const semana = typeof s === 'string' ? s : s.semana;
+const movidoA = typeof s === 'object' ? s.movidoA : null;
+const label = movidoA
+? `⏭️ Semana del ${fmtFechaCorta(semana)} · ↪️ movida a ${esc(movidoA.dia)} ${movidoA.hora||''}`
+: `⏭️ Semana del ${fmtFechaCorta(semana)}`;
+return `<div class="flex items-center justify-between bg-white rounded px-2 py-1 border border-amber-200"><span class="text-xs text-amber-800">${label}</span><button type="button" data-action="remove-salto" data-fecha="${semana}" class="text-amber-600 hover:text-amber-800 text-xs">✕</button></div>`;
+}).join('');
 }
 
 function openModalAgenda(id=null, prefillDia=null, prefillPacId=null) {
@@ -1803,6 +2119,79 @@ if (!confirm('¿Eliminar esta visita?')) return;
 state.agenda = state.agenda.filter(a=>!sameId(a.id, id)); saveLocal();
 pushDelete('Agenda', id);
 closeModal('modal-agenda'); renderAll(); toast('Visita eliminada','info');
+});
+
+/* ============================================================
+MODAL: MOVER VISITA (solo esta semana)
+============================================================ */
+function openModalMover(agendaVisitaId) {
+// agendaVisitaId es el id de la OCURRENCIA (viene de getVisitasForWeek, que copia el id
+// del agenda original salvo que sea una visita puntual — en ambos casos coincide con
+// el id real en state.agenda).
+const visitasSemana = getVisitasForWeek(weekOffset);
+const v = visitasSemana.find(x => sameId(x.id, agendaVisitaId) && !x.movida);
+if (!v) return;
+const p = pacienteById(v.pacienteId);
+document.getElementById('mover-id').value = v.id;
+document.getElementById('mover-info').textContent = `${p ? p.nombre : 'Paciente'} · actualmente ${v.diaSemana} ${v.horaInicio}`;
+document.getElementById('mover-dia').value = v.diaSemana;
+document.getElementById('mover-hora').value = v.horaInicio;
+document.getElementById('modal-mover').classList.remove('hidden');
+}
+
+document.getElementById('form-mover').addEventListener('submit', async (e) => {
+e.preventDefault();
+const id = document.getElementById('mover-id').value;
+const nuevoDia = document.getElementById('mover-dia').value;
+const nuevaHora = document.getElementById('mover-hora').value;
+const a = state.agenda.find(x => sameId(x.id, id));
+if (!a) { closeModal('modal-mover'); return; }
+
+const lunes = getWeekStart(weekOffset);
+const lunesISO = isoDate(lunes);
+const diaIdx = DIA_IDX[nuevoDia];
+const fechaNueva = new Date(lunes); fechaNueva.setDate(lunes.getDate() + diaIdx);
+const fechaNuevaISO = isoDate(fechaNueva);
+
+if (a.recurrente === false) {
+// Ya era una visita puntual: se edita directo, no hace falta dejar rastro.
+a.diaSemana = nuevoDia;
+a.horaInicio = nuevaHora;
+a.semanaEspecifica = lunesISO;
+saveLocal();
+pushRow('Agenda', a);
+closeModal('modal-mover'); renderAll();
+toast('Visita movida');
+return;
+}
+
+// Visita recurrente: se crea una visita puntual nueva en el día/hora elegidos,
+// y se salta esta semana en la original dejando el rastro "movidoA" para el cartelito.
+const nueva = {
+id: uid(),
+pacienteId: a.pacienteId,
+diaSemana: nuevoDia,
+horaInicio: nuevaHora,
+recurrente: false,
+semanaEspecifica: lunesISO,
+semanasSaltadas: [],
+notasAgenda: a.notasAgenda || ''
+};
+state.agenda.push(nueva);
+
+if (!a.semanasSaltadas) a.semanasSaltadas = [];
+// Si ya había un salto plano (manual, sin mover) para esta semana, lo reemplazamos por el que sí lleva el rastro.
+a.semanasSaltadas = a.semanasSaltadas.filter(s => (typeof s === 'string' ? s : s.semana) !== lunesISO);
+a.semanasSaltadas.push({
+semana: lunesISO,
+movidoA: { dia: nuevoDia, fecha: fechaNuevaISO, hora: nuevaHora, agendaIdDestino: nueva.id }
+});
+
+saveLocal();
+pushRow('Agenda', a);
+pushRow('Agenda', nueva);
+closeModal('modal-mover'); renderAll();
+toast('Visita movida a ' + nuevoDia);
 });
 
 /* ============================================================
@@ -2083,6 +2472,50 @@ const action = btn.dataset.action;
 switch(action) {
 case 'ver-agenda': openModalAgenda(btn.dataset.id); break;
 case 'edit-agenda': e.stopPropagation(); openModalAgenda(btn.dataset.id); break;
+case 'abrir-mover': e.stopPropagation(); openModalMover(btn.dataset.id); break;
+case 'marcar-hecha': {
+e.stopPropagation();
+const a = state.agenda.find(x => sameId(x.id, btn.dataset.id));
+if (a) {
+if (!a.fechasHechas) a.fechasHechas = [];
+if (!a.fechasHechas.includes(btn.dataset.fecha)) a.fechasHechas.push(btn.dataset.fecha);
+saveLocal();
+pushRow('Agenda', a);
+renderAll();
+toast('Marcada como hecha');
+}
+break;
+}
+case 'desmarcar-hecha': {
+e.stopPropagation();
+const a = state.agenda.find(x => sameId(x.id, btn.dataset.id));
+if (a && a.fechasHechas) {
+a.fechasHechas = a.fechasHechas.filter(f => f !== btn.dataset.fecha);
+saveLocal();
+pushRow('Agenda', a);
+renderAll();
+toast('Marca quitada', 'info');
+}
+break;
+}
+case 'deshacer-movida': {
+const aid = btn.dataset.id;
+const semana = btn.dataset.semana;
+const a = state.agenda.find(x => sameId(x.id, aid));
+if (a && a.semanasSaltadas) {
+const entry = a.semanasSaltadas.find(s => typeof s === 'object' && s.semana === semana);
+if (entry && entry.movidoA && entry.movidoA.agendaIdDestino) {
+state.agenda = state.agenda.filter(x => !sameId(x.id, entry.movidoA.agendaIdDestino));
+pushDelete('Agenda', entry.movidoA.agendaIdDestino);
+}
+a.semanasSaltadas = a.semanasSaltadas.filter(s => (typeof s === 'string' ? s : s.semana) !== semana);
+saveLocal();
+pushRow('Agenda', a);
+renderAll();
+toast('Movimiento deshecho', 'info');
+}
+break;
+}
 case 'evolucionar': e.stopPropagation(); openModalEvolucion(btn.dataset.agenda, null, btn.dataset.fecha); break;
 case 'add-agenda': openModalAgenda(null, btn.dataset.dia); break;
 case 'add-agenda-paciente': closeModal('modal-detalle'); openModalAgenda(null, null, btn.dataset.id); break;
@@ -2124,7 +2557,12 @@ const fecha = btn.dataset.fecha;
 const id = document.getElementById('ag-id').value;
 const a = state.agenda.find(x => sameId(x.id, id));
 if (a && a.semanasSaltadas) {
-a.semanasSaltadas = a.semanasSaltadas.filter(s => s !== fecha);
+const entry = a.semanasSaltadas.find(s => (typeof s === 'string' ? s : s.semana) === fecha);
+if (entry && typeof entry === 'object' && entry.movidoA && entry.movidoA.agendaIdDestino) {
+state.agenda = state.agenda.filter(x => !sameId(x.id, entry.movidoA.agendaIdDestino));
+pushDelete('Agenda', entry.movidoA.agendaIdDestino);
+}
+a.semanasSaltadas = a.semanasSaltadas.filter(s => (typeof s === 'string' ? s : s.semana) !== fecha);
 saveLocal();
 pushRow('Agenda', a);
 renderSaltos(); renderAgenda();
@@ -2151,6 +2589,7 @@ else b.classList.remove('text-slate-600');
 if (view === 'agenda') renderAgenda();
 if (view === 'pacientes') renderPacientes();
 if (view === 'visitas') renderVisitas();
+if (view === 'planilla') renderPlanilla();
 }
 
 document.getElementById('btn-add-patient').addEventListener('click', () => openModalPaciente());
@@ -2177,8 +2616,13 @@ document.getElementById('btn-sync-now-mobile').addEventListener('click', syncWit
 document.getElementById('btn-import-csv').addEventListener('click', openModalCSV);
 document.getElementById('btn-import-csv-mobile').addEventListener('click', openModalCSV);
 
+document.getElementById('btn-prev-month').addEventListener('click', () => { monthOffset--; renderPlanilla(); });
+document.getElementById('btn-next-month').addEventListener('click', () => { monthOffset++; renderPlanilla(); });
+document.getElementById('planilla-filter-empresa').addEventListener('change', renderPlanilla);
+document.getElementById('planilla-solo-pendientes').addEventListener('change', renderPlanilla);
+
 document.getElementById('btn-export').addEventListener('click', () => {
-const data = { version:7, exportedAt: new Date().toISOString(), pacientes: state.pacientes, agenda: state.agenda, evoluciones: state.evoluciones, config: state.config };
+const data = { version:8, exportedAt: new Date().toISOString(), pacientes: state.pacientes, agenda: state.agenda, evoluciones: state.evoluciones, tarifas: state.tarifas, config: state.config };
 const blob = new Blob([JSON.stringify(data,null,2)], { type:'application/json' });
 const url = URL.createObjectURL(blob);
 const a = document.createElement('a'); a.href = url; a.download = `paliativos-backup-${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url);
@@ -2195,12 +2639,12 @@ try {
 const d = JSON.parse(ev.target.result);
 if (!d.pacientes) throw new Error('Formato inválido');
 if (!confirm('¿Reemplazar todos los datos actuales?')) return;
-state.pacientes = d.pacientes||[]; state.agenda = d.agenda||[]; state.evoluciones = d.evoluciones||[];
+state.pacientes = d.pacientes||[]; state.agenda = d.agenda||[]; state.evoluciones = d.evoluciones||[]; state.tarifas = d.tarifas||[];
 if (d.config) state.config = {...state.config, ...d.config};
 saveLocal();
 if (state.config.apiUrl && state.config.apiToken) {
 try {
-await apiCall('POST', { action: 'sync', data: { pacientes: state.pacientes, agenda: state.agenda, evoluciones: state.evoluciones }, token: state.config.apiToken });
+await apiCall('POST', { action: 'sync', data: { pacientes: state.pacientes, agenda: state.agenda, evoluciones: state.evoluciones, tarifas: state.tarifas }, token: state.config.apiToken });
 state.lastSync = new Date().toISOString();
 saveLocal();
 } catch(err) { console.error(err); }
