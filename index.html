@@ -973,9 +973,6 @@ function chipUltimaVisita(pacienteId) {
 }
 
 /* ============================================================
-CHECKLIST ADMINISTRATIVO: estado de la última evolución cargada
-============================================================ */
-/* ============================================================
 "HECHA" / "MOVIDA": marcas automáticas sobre la tarjeta de visita
 ============================================================ */
 // true si existe una evolución cargada para ese paciente en esa fecha exacta.
@@ -996,11 +993,14 @@ return { hecha: porEvolucion || manual, manual };
 function chipMovida(v) {
 const destino = v.movidoA;
 return `<div class="flex items-center justify-between gap-1 bg-blue-50 border border-blue-200 rounded-lg px-2 py-1.5 mb-2 text-[10px] text-blue-700">
-<span>↪️ Pasó a ${esc(destino.dia)} ${destino.hora||''}</span>
+<span>↪️ Pasó a ${esc(destino.dia)} ${esc(destino.hora||'')}</span>
 <button data-action="deshacer-movida" data-id="${v.id}" data-semana="${v.semanaMovidaKey||''}" class="text-blue-400 hover:text-blue-700" title="Deshacer">✕</button>
 </div>`;
 }
 
+/* ============================================================
+CHECKLIST ADMINISTRATIVO: estado de la última evolución cargada
+============================================================ */
 function ultimaEvolucion(pacienteId) {
   let ultima = null;
   state.evoluciones.forEach(e => {
@@ -1174,7 +1174,7 @@ if (!p) {
 html += `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2.5 mb-2">
 <div class="flex items-center gap-2 mb-1">
 <span class="text-rose-600 text-lg">⚠️</span>
-<div><p class="text-xs font-bold text-rose-800">Paciente no encontrado</p><p class="text-[10px] text-rose-600">ID: ${v.pacienteId}</p></div>
+<div><p class="text-xs font-bold text-rose-800">Paciente no encontrado</p><p class="text-[10px] text-rose-600">ID: ${esc(v.pacienteId)}</p></div>
 </div>
 <button data-action="delete-agenda" data-id="${v.id}" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium py-1.5 rounded">🗑️ Eliminar visita huérfana</button>
 </div>`;
@@ -1328,7 +1328,7 @@ const p = pacientesMap ? (pacientesMap.get(String(v.pacienteId).trim()) || null)
 if (!p) {
 return `<div class="border border-rose-200 bg-rose-50 rounded-xl p-3 mb-2">
 <p class="text-xs font-bold text-rose-800 mb-1">⚠️ Paciente no encontrado</p>
-<p class="text-[11px] text-rose-600 mb-2">ID: ${v.pacienteId}</p>
+<p class="text-[11px] text-rose-600 mb-2">ID: ${esc(v.pacienteId)}</p>
 <button data-action="delete-agenda" data-id="${v.id}" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium py-1.5 rounded">🗑️ Eliminar</button>
 </div>`;
 }
@@ -1687,14 +1687,58 @@ label = label.charAt(0).toUpperCase() + label.slice(1);
 return { year, month, label };
 }
 
-function evolucionesDelMes(offset) {
-const { year, month } = getMonthRange(offset);
-return state.evoluciones.filter(e => {
-if (!e.fechaVisita) return false;
-const d = new Date(String(e.fechaVisita).trim() + 'T00:00:00');
+function estaEnMes(fecha, year, month) {
+if (!fecha) return false;
+const d = new Date(String(fecha).trim() + 'T00:00:00');
 if (isNaN(d.getTime())) return false;
 return d.getFullYear() === year && d.getMonth() === month;
+}
+
+// Une las dos fuentes de "esto se hizo": evoluciones cargadas (traen más detalle:
+// sistema/firma/notas) y marcas manuales rápidas de "Hecha" (fechasHechas en la agenda,
+// para quien no suele escribir evoluciones). Si un mismo paciente+fecha tiene las dos
+// cosas, cuenta una sola vez (prioriza la evolución, que tiene más datos).
+function visitasRealizadasDelMes(offset) {
+const { year, month } = getMonthRange(offset);
+const resultado = [];
+const yaContadas = new Set();
+
+state.evoluciones.forEach(e => {
+if (!estaEnMes(e.fechaVisita, year, month)) return;
+const pid = String(e.pacienteId).trim();
+const fecha = String(e.fechaVisita).trim();
+const key = pid + '|' + fecha;
+if (yaContadas.has(key)) return;
+yaContadas.add(key);
+resultado.push({
+pacienteId: pid,
+fecha,
+origen: 'evolucion',
+evolucionoSistema: e.evolucionoSistema,
+firmoPlanillaOS: e.firmoPlanillaOS
 });
+});
+
+state.agenda.forEach(a => {
+if (!a.fechasHechas) return;
+const pid = String(a.pacienteId).trim();
+a.fechasHechas.forEach(fecha => {
+fecha = String(fecha).trim();
+if (!estaEnMes(fecha, year, month)) return;
+const key = pid + '|' + fecha;
+if (yaContadas.has(key)) return;
+yaContadas.add(key);
+resultado.push({
+pacienteId: pid,
+fecha,
+origen: 'manual',
+evolucionoSistema: null,
+firmoPlanillaOS: null
+});
+});
+});
+
+return resultado;
 }
 
 function tarifaEmpresa(empresa) {
@@ -1721,7 +1765,7 @@ const { label } = getMonthRange(monthOffset);
 document.getElementById('planilla-mes-label').textContent = label;
 
 const pacientesMap = new Map(state.pacientes.map(p => [String(p.id).trim(), p]));
-const evs = evolucionesDelMes(monthOffset).map(e => ({ e, p: pacientesMap.get(String(e.pacienteId).trim()) || null }));
+const evs = visitasRealizadasDelMes(monthOffset).map(v => ({ v, p: pacientesMap.get(v.pacienteId) || null }));
 
 // Empresas: todas las que aparecen en pacientes, más cualquiera con tarifa ya cargada
 // (por si en algún momento no queda ningún paciente activo de esa empresa)
@@ -1791,12 +1835,15 @@ const soloPendientes = document.getElementById('planilla-solo-pendientes').check
 // Tabla de visitas del mes
 let filas = evs.filter(({ p }) => !filtroEmpresaActual || p?.empresa === filtroEmpresaActual);
 if (soloPendientes) {
-filas = filas.filter(({ e, p }) => {
+// Las marcas manuales (✋) no tienen sistema/firma que rastrear, así que no aplica
+// "pendiente" para ellas — solo las evoluciones reales que falten cargar/firmar.
+filas = filas.filter(({ v, p }) => {
+if (v.origen === 'manual') return false;
 const noFirma = osNoRequiereFirma(p?.obraSocial);
-return !e.evolucionoSistema || (!noFirma && !e.firmoPlanillaOS);
+return !v.evolucionoSistema || (!noFirma && !v.firmoPlanillaOS);
 });
 }
-filas.sort((a, b) => String(b.e.fechaVisita||'').localeCompare(String(a.e.fechaVisita||'')));
+filas.sort((a, b) => String(b.v.fecha||'').localeCompare(String(a.v.fecha||'')));
 
 const wrap = document.getElementById('planilla-table-wrap');
 if (filas.length === 0) {
@@ -1814,15 +1861,22 @@ wrap.innerHTML = `<div class="overflow-x-auto">
 </tr>
 </thead>
 <tbody class="divide-y divide-slate-100">
-${filas.map(({ e, p }) => {
+${filas.map(({ v, p }) => {
 const noFirma = osNoRequiereFirma(p?.obraSocial);
 const empColor = getEmpresaColor(p?.empresa);
+const esManual = v.origen === 'manual';
+const celdaSistema = esManual
+? '<span class="text-[10px] text-slate-400" title="Marcada como hecha a mano, sin evolución cargada">✋</span>'
+: (v.evolucionoSistema ? '<span class="text-brand-600">✅</span>' : '<span class="text-amber-600">⏳</span>');
+const celdaFirma = esManual
+? '<span class="text-slate-300">—</span>'
+: (noFirma ? '<span class="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">N/A</span>' : (v.firmoPlanillaOS ? '<span class="text-brand-600">✅</span>' : '<span class="text-amber-600">⏳</span>'));
 return `<tr class="hover:bg-slate-50">
-<td class="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">${fmtFechaCorta(e.fechaVisita)}</td>
+<td class="px-4 py-3 text-xs text-slate-600 whitespace-nowrap">${fmtFechaCorta(v.fecha)}</td>
 <td class="px-4 py-3 text-sm font-medium text-slate-800">${esc(p?.nombre || 'Paciente eliminado')}</td>
 <td class="px-4 py-3 hidden sm:table-cell"><span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p?.empresa || 'Sin empresa')}</span></td>
-<td class="px-4 py-3 text-center">${e.evolucionoSistema ? '<span class="text-brand-600">✅</span>' : '<span class="text-amber-600">⏳</span>'}</td>
-<td class="px-4 py-3 text-center">${noFirma ? '<span class="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">N/A</span>' : (e.firmoPlanillaOS ? '<span class="text-brand-600">✅</span>' : '<span class="text-amber-600">⏳</span>')}</td>
+<td class="px-4 py-3 text-center">${celdaSistema}</td>
+<td class="px-4 py-3 text-center">${celdaFirma}</td>
 </tr>`;
 }).join('')}
 </tbody>
