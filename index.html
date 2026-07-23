@@ -310,9 +310,18 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <p class="text-[10px] text-brand-700 mt-2">⏱️ Visita 30' + traslado 15' = 45' bloqueados</p>
 </div>
 <label class="flex items-start gap-2 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
-<input id="ag-recurrente" type="checkbox" checked class="mt-0.5 w-4 h-4 accent-brand-600">
+<input id="ag-recurrente" type="checkbox" class="mt-0.5 w-4 h-4 accent-brand-600">
 <div><p class="text-sm font-medium text-slate-700">🔁 Recurrente</p><p class="text-[11px] text-slate-500" id="ag-recurrente-hint">Se repite cada semana (todos los <span id="ag-recurrente-dia">lunes</span>)</p></div>
 </label>
+<div id="ag-intervalo-wrap" class="hidden">
+<label class="block text-xs font-semibold text-slate-600 mb-1">Se repite cada</label>
+<select id="ag-intervalo" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
+<option value="1">Semana (todas las semanas)</option>
+<option value="2">2 semanas</option>
+<option value="3">3 semanas</option>
+<option value="4">4 semanas (aprox. mensual)</option>
+</select>
+</div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Notas (ej: llevar recetas)</label><textarea id="ag-notas" rows="2" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></textarea></div>
 <div id="ag-saltos-section" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-3">
 <p class="text-xs font-semibold text-amber-800 mb-2">⏭️ Semanas saltadas</p>
@@ -1049,6 +1058,17 @@ const rec = a.recurrente !== false;
 let aparece = false;
 let movidoA = null;
 if (rec) {
+// "Cada N semanas": si el intervalo es 1 (o no tiene fecha de anclaje, entradas viejas),
+// se comporta exactamente como antes (aparece todas las semanas salvo que esté saltada).
+const intervalo = a.intervaloSemanas || 1;
+let alineada = true;
+if (intervalo > 1 && a.fechaInicioRecurrencia) {
+const inicio = new Date(String(a.fechaInicioRecurrencia).trim() + 'T00:00:00');
+const actual = new Date(lunesISO + 'T00:00:00');
+const diffSemanas = Math.round((actual - inicio) / (7*24*60*60*1000));
+alineada = diffSemanas >= 0 && (diffSemanas % intervalo === 0);
+}
+if (alineada) {
 const saltadas = a.semanasSaltadas || [];
 // Cada entrada de semanasSaltadas puede ser un string plano (salto manual, sin más info)
 // o un objeto { semana, movidoA } cuando el salto vino del botón "Mover".
@@ -1057,6 +1077,7 @@ if (!saltadaEntry) {
 aparece = true;
 } else if (typeof saltadaEntry === 'object' && saltadaEntry.movidoA) {
 movidoA = saltadaEntry.movidoA;
+}
 }
 } else {
 if (a.semanaEspecifica && String(a.semanaEspecifica).trim() === lunesISO) aparece = true;
@@ -1949,7 +1970,10 @@ const fechaInput = document.getElementById('ag-fecha');
 const previewText = document.getElementById('ag-fecha-preview-text');
 const recurrenteDia = document.getElementById('ag-recurrente-dia');
 const recurrente = document.getElementById('ag-recurrente').checked;
+const intervaloWrap = document.getElementById('ag-intervalo-wrap');
+const intervalo = parseInt(document.getElementById('ag-intervalo').value, 10) || 1;
 recurrenteDia.textContent = dia.toLowerCase();
+intervaloWrap.classList.toggle('hidden', !recurrente);
 
 if (!fechaInput.value || fechaInput.dataset.lastDia !== dia) {
 const lunes = getWeekStart(weekOffset);
@@ -1963,7 +1987,8 @@ fechaInput.dataset.lastDia = dia;
 if (fechaInput.value) {
 const fechaLarga = fmtFechaLarga(fechaInput.value);
 if (recurrente) {
-previewText.innerHTML = `<strong>todos los ${dia.toLowerCase()}</strong> · primera aparición: ${fechaLarga}`;
+const frecuencia = intervalo === 1 ? `todos los ${dia.toLowerCase()}` : `cada ${intervalo} semanas, los ${dia.toLowerCase()}`;
+previewText.innerHTML = `<strong>${frecuencia}</strong> · primera aparición: ${fechaLarga}`;
 } else {
 previewText.innerHTML = `<strong>solo ${fechaLarga}</strong> (visita puntual)`;
 }
@@ -1996,7 +2021,7 @@ function openModalAgenda(id=null, prefillDia=null, prefillPacId=null) {
 const form = document.getElementById('form-agenda'); form.reset();
 document.getElementById('ag-id').value = '';
 document.getElementById('btn-delete-agenda').classList.add('hidden');
-document.getElementById('ag-recurrente').checked = true;
+document.getElementById('ag-recurrente').checked = false;
 const fechaInput = document.getElementById('ag-fecha');
 fechaInput.value = '';
 fechaInput.dataset.lastDia = '';
@@ -2016,6 +2041,7 @@ document.getElementById('ag-paciente').value = a.pacienteId;
 document.getElementById('ag-dia').value = a.diaSemana;
 document.getElementById('ag-hora').value = a.horaInicio || '09:00';
 document.getElementById('ag-recurrente').checked = a.recurrente !== false;
+document.getElementById('ag-intervalo').value = String(a.intervaloSemanas || 1);
 document.getElementById('ag-notas').value = a.notasAgenda||'';
 document.getElementById('btn-delete-agenda').classList.remove('hidden');
 
@@ -2054,6 +2080,7 @@ document.getElementById('modal-agenda').classList.remove('hidden');
 document.getElementById('ag-hora').addEventListener('change', updateHoraPreview);
 document.getElementById('ag-dia').addEventListener('change', updateFechaPreview);
 document.getElementById('ag-fecha').addEventListener('change', updateFechaPreview);
+document.getElementById('ag-intervalo').addEventListener('change', updateFechaPreview);
 document.getElementById('ag-recurrente').addEventListener('change', () => {
 updateFechaPreview();
 renderSaltos();
@@ -2086,11 +2113,24 @@ let semanaEspecifica = null;
 if (!recurrente && fechaStr) {
 semanaEspecifica = getLunesISOForDate(fechaStr);
 }
+const existingPrev = id ? state.agenda.find(a=>sameId(a.id, id)) : null;
+let intervaloSemanas = 1;
+let fechaInicioRecurrencia = null;
+if (recurrente) {
+intervaloSemanas = parseInt(document.getElementById('ag-intervalo').value, 10) || 1;
+// El ancla de "cada N semanas" se fija la primera vez y no se mueve sola después
+// (si el usuario después cambia el intervalo, sigue contando desde la misma semana de siempre).
+fechaInicioRecurrencia = (existingPrev && existingPrev.fechaInicioRecurrencia)
+? existingPrev.fechaInicioRecurrencia
+: getLunesISOForDate(fechaStr);
+}
 const data = {
 pacienteId: String(document.getElementById('ag-paciente').value).trim(),
 diaSemana: document.getElementById('ag-dia').value,
 horaInicio: document.getElementById('ag-hora').value,
 recurrente,
+intervaloSemanas,
+fechaInicioRecurrencia,
 semanaEspecifica,
 notasAgenda: document.getElementById('ag-notas').value.trim()
 };
