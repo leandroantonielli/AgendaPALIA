@@ -131,6 +131,9 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <h2 class="text-lg font-bold text-slate-800" id="agenda-week-label">Semana actual</h2>
 <p class="text-xs text-slate-500" id="agenda-week-sublabel"></p>
 </div>
+<button id="btn-toggle-vista" class="hidden lg:flex px-3 py-2 rounded-xl text-xs font-medium border border-slate-200 text-slate-600 hover:bg-slate-50 items-center gap-1.5">
+<span id="btn-toggle-vista-icon">🗂️</span> <span id="btn-toggle-vista-label">Comprimir todo</span>
+</button>
 <button id="btn-add-visit" class="bg-brand-600 hover:bg-brand-700 text-white px-4 py-2 rounded-xl text-sm font-medium shadow-sm flex items-center gap-2">
 <span>➕</span> Nueva visita
 </button>
@@ -144,7 +147,7 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <!-- VISTA MÓVIL -->
 <div class="lg:hidden space-y-3">
 <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-2">
-<div class="grid grid-cols-6 gap-1" id="mobile-day-tabs"></div>
+<div class="grid grid-cols-7 gap-1" id="mobile-day-tabs"></div>
 </div>
 <div id="mobile-day-content" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4"></div>
 </div>
@@ -290,7 +293,7 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <label class="block text-xs font-semibold text-slate-600 mb-1">Día *</label>
 <select id="ag-dia" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
 <option>Lunes</option><option>Martes</option><option>Miércoles</option>
-<option>Jueves</option><option>Viernes</option><option>Sábado</option>
+<option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option>
 </select>
 </div>
 <div>
@@ -379,7 +382,7 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Nuevo día</label>
 <select id="mover-dia" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500">
 <option>Lunes</option><option>Martes</option><option>Miércoles</option>
-<option>Jueves</option><option>Viernes</option><option>Sábado</option>
+<option>Jueves</option><option>Viernes</option><option>Sábado</option><option>Domingo</option>
 </select>
 </div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Nueva hora</label>
@@ -514,13 +517,20 @@ pendingChanges: [],
 viewMode: 'cards'
 };
 
-const DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
-const DIAS_CORTO = ['L','M','X','J','V','S'];
-const DIA_IDX = { Lunes:0, Martes:1, Miércoles:2, Jueves:3, Viernes:4, Sábado:5 };
+const DIAS = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
+const DIAS_CORTO = ['L','M','X','J','V','S','D'];
+const DIA_IDX = { Lunes:0, Martes:1, Miércoles:2, Jueves:3, Viernes:4, Sábado:5, Domingo:6 };
 
 let weekOffset = 0;
 let selectedDayMobile = null;
 let selectedDayByWeek = {};
+// Vista compacta de la agenda (solo escritorio): null = automática por día
+// (se comprime solo si supera UMBRAL_COMPACTA visitas), 'comprimida'/'completa'
+// = el botón global fuerza ese estado en todos los días.
+let vistaGlobalOverride = null;
+const UMBRAL_COMPACTA = 5;
+// ids de visitas puntuales expandidas a mano dentro de un día comprimido.
+let cardsExpandidosManual = new Set();
 
 function uid() { return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2,9); }
 
@@ -846,8 +856,8 @@ return l;
 
 function getWeekRange(offset=0) {
 const lunes = getWeekStart(offset);
-const sabado = new Date(lunes); sabado.setDate(lunes.getDate() + 5);
-return { lunes, sabado };
+const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
+return { lunes, domingo };
 }
 
 function isoDate(d) { return d.toISOString().slice(0,10); }
@@ -916,7 +926,7 @@ function esc(s) {
 
 function getTodayDayIdx() {
 const d = new Date().getDay();
-if (d === 0) return 5;
+if (d === 0) return 6;
 return d - 1;
 }
 
@@ -1118,8 +1128,80 @@ return result;
 /* ============================================================
 RENDER: AGENDA DESKTOP
 ============================================================ */
+function diaEstaComprimido(cantidadVisitasReales) {
+if (vistaGlobalOverride === 'comprimida') return true;
+if (vistaGlobalOverride === 'completa') return false;
+return cantidadVisitasReales > UMBRAL_COMPACTA;
+}
+
+// Contenido interno de la tarjeta completa de una visita (sin el wrapper),
+// para poder reusarlo tanto en un día desplegado normal como en una tarjeta
+// expandida a mano dentro de un día comprimido.
+function visitCardCompletaHtml(v, p, hoyISO) {
+const edad = calcEdad(p.fechaNacimiento);
+const turnoColor = v.turno === 'mañana' ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50 border-indigo-200';
+const empColor = getEmpresaColor(p.empresa);
+const puedeMarcarse = v.fechaVisitaSemana <= hoyISO;
+const estado = puedeMarcarse ? estadoHecha(v) : { hecha:false, manual:false };
+return `<div class="flex items-start justify-between gap-1 mb-1.5">
+<div class="flex-1 min-w-0">
+<div class="flex items-center gap-1.5">
+<span class="time-badge text-sm font-bold text-brand-700">${v.horaInicio}</span>
+<span class="text-[10px] text-slate-400">→</span>
+<span class="time-badge text-[11px] text-slate-500">${v.horaLibre}</span>
+${v.recurrente ? '<span class="text-[10px] text-slate-400" title="Recurrente">🔁</span>' : '<span class="text-[10px] text-indigo-500" title="Visita puntual">📌</span>'}
+</div>
+<p class="text-xs font-semibold text-slate-800 leading-tight truncate mt-0.5">${esc(p.nombre)}</p>
+${edad !== null ? `<p class="text-[10px] text-slate-500">${edad} años</p>` : ''}
+</div>
+<div class="flex flex-col items-end gap-1">
+<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
+${p.usaOpioides==='Sí' ? '<span class="text-[10px]" title="Usa opioides">💊</span>' : ''}
+<span class="text-[9px] px-1 py-0.5 rounded ${turnoColor} font-medium">${v.turno === 'mañana' ? '🌅' : '🌇'}</span>
+</div>
+</div>
+${estado.hecha
+? `<div class="mb-1 flex items-center gap-1">${chipHecha()}${estado.manual ? `<button data-action="desmarcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" title="Quitar marca" class="text-[9px] text-slate-300 hover:text-slate-500">✕</button>` : ''}</div>`
+: (puedeMarcarse ? `<button data-action="marcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="mb-1 text-[9px] px-1.5 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition">☐ Marcar hecha</button>` : '')}
+<div class="text-[10px] text-slate-500 space-y-0.5">
+<p>🏠 <span class="truncate">${esc(p.direccion || '-')}</span>${p.piso ? ' · '+esc(p.piso) : ''}</p>
+${v.notasAgenda ? `<p class="italic">📝 ${esc(v.notasAgenda)}</p>` : ''}
+</div>
+<div class="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition">
+<button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-[10px] font-medium py-1 rounded">📝 Pendientes</button>
+${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Cómo llegar" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded flex items-center justify-center">📍</a>` : ''}
+<button data-action="abrir-mover" data-id="${v.id}" title="Mover a otro día" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">↪️</button>
+<button data-action="edit-agenda" data-id="${v.id}" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">✏️</button>
+</div>`;
+}
+
+// Fila angosta usada cuando el día está en modo comprimido: solo hora + nombre.
+function visitCompactaHtml(v, p) {
+return `<div class="flex items-center gap-2 px-2.5 py-1.5 mb-1 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-brand-300 cursor-pointer transition" data-action="toggle-card-expandida" data-id="${v.id}">
+<span class="time-badge text-[10px] font-semibold text-brand-700 flex-shrink-0">${v.horaInicio}</span>
+<span class="text-[11px] text-slate-800 truncate flex-1">${esc(p.nombre)}</span>
+${p.usaOpioides==='Sí' ? '<span class="text-[9px] flex-shrink-0" title="Usa opioides">💊</span>' : ''}
+<span class="text-slate-300 text-[9px] flex-shrink-0">▾</span>
+</div>`;
+}
+
+function actualizarBotonVista() {
+const btn = document.getElementById('btn-toggle-vista');
+if (!btn) return;
+const icon = document.getElementById('btn-toggle-vista-icon');
+const label = document.getElementById('btn-toggle-vista-label');
+if (vistaGlobalOverride === 'comprimida') {
+icon.textContent = '🗂️';
+label.textContent = 'Desplegar todo';
+} else {
+icon.textContent = '📋';
+label.textContent = 'Comprimir todo';
+}
+}
+
 function renderAgendaDesktop() {
-const { lunes, sabado } = getWeekRange(weekOffset);
+actualizarBotonVista();
+const { lunes, domingo } = getWeekRange(weekOffset);
 const hoy = new Date(); hoy.setHours(0,0,0,0);
 const hoyISO = isoDate(hoy);
 const header = document.getElementById('agenda-header');
@@ -1168,6 +1250,8 @@ ${tarde > 0 ? (rutaTarde ? `<a href="${rutaTarde}" target="_blank" rel="noopener
 </div>`;
 }
 
+const comprimido = diaEstaComprimido(realItems.length);
+
 realItems.forEach(v => {
 const p = pacientesMap.get(String(v.pacienteId).trim()) || null;
 if (!p) {
@@ -1181,44 +1265,23 @@ html += `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2
 return;
 }
 
-const edad = calcEdad(p.fechaNacimiento);
-const turnoColor = v.turno === 'mañana' ? 'bg-amber-50 border-amber-200' : 'bg-indigo-50 border-indigo-200';
-const empColor = getEmpresaColor(p.empresa);
-const puedeMarcarse = v.fechaVisitaSemana <= hoyISO;
-const estado = puedeMarcarse ? estadoHecha(v) : { hecha:false, manual:false };
-
-html += `<div class="visit-card bg-white border border-slate-200 rounded-lg p-2.5 mb-2 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
-<div class="flex items-start justify-between gap-1 mb-1.5">
-<div class="flex-1 min-w-0">
-<div class="flex items-center gap-1.5">
-<span class="time-badge text-sm font-bold text-brand-700">${v.horaInicio}</span>
-<span class="text-[10px] text-slate-400">→</span>
-<span class="time-badge text-[11px] text-slate-500">${v.horaLibre}</span>
-${v.recurrente ? '<span class="text-[10px] text-slate-400" title="Recurrente">🔁</span>' : '<span class="text-[10px] text-indigo-500" title="Visita puntual">📌</span>'}
+if (comprimido && !cardsExpandidosManual.has(v.id)) {
+html += visitCompactaHtml(v, p);
+} else if (comprimido) {
+// Expandida a mano dentro de un día comprimido: mismo contenido, con un botón para volver a comprimir.
+html += `<div class="border border-slate-200 rounded-lg mb-2 bg-white overflow-hidden">
+<div class="flex justify-end px-2 pt-1.5">
+<button data-action="toggle-card-expandida" data-id="${v.id}" class="text-[9px] text-slate-400 hover:text-slate-600 flex items-center gap-0.5">▴ comprimir</button>
 </div>
-<p class="text-xs font-semibold text-slate-800 leading-tight truncate mt-0.5">${esc(p.nombre)}</p>
-${edad !== null ? `<p class="text-[10px] text-slate-500">${edad} años</p>` : ''}
-</div>
-<div class="flex flex-col items-end gap-1">
-<span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
-${p.usaOpioides==='Sí' ? '<span class="text-[10px]" title="Usa opioides">💊</span>' : ''}
-<span class="text-[9px] px-1 py-0.5 rounded ${turnoColor} font-medium">${v.turno === 'mañana' ? '🌅' : '🌇'}</span>
-</div>
-</div>
-${estado.hecha
-? `<div class="mb-1 flex items-center gap-1">${chipHecha()}${estado.manual ? `<button data-action="desmarcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" title="Quitar marca" class="text-[9px] text-slate-300 hover:text-slate-500">✕</button>` : ''}</div>`
-: (puedeMarcarse ? `<button data-action="marcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="mb-1 text-[9px] px-1.5 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition">☐ Marcar hecha</button>` : '')}
-<div class="text-[10px] text-slate-500 space-y-0.5">
-<p>🏠 <span class="truncate">${esc(p.direccion || '-')}</span>${p.piso ? ' · '+esc(p.piso) : ''}</p>
-${v.notasAgenda ? `<p class="italic">📝 ${esc(v.notasAgenda)}</p>` : ''}
-</div>
-<div class="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition">
-<button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-[10px] font-medium py-1 rounded">📝 Pendientes</button>
-${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Cómo llegar" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded flex items-center justify-center">📍</a>` : ''}
-<button data-action="abrir-mover" data-id="${v.id}" title="Mover a otro día" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">↪️</button>
-<button data-action="edit-agenda" data-id="${v.id}" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">✏️</button>
+<div class="visit-card p-2.5 pt-0 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
+${visitCardCompletaHtml(v, p, hoyISO)}
 </div>
 </div>`;
+} else {
+html += `<div class="visit-card bg-white border border-slate-200 rounded-lg p-2.5 mb-2 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
+${visitCardCompletaHtml(v, p, hoyISO)}
+</div>`;
+}
 });
 html += `<button data-action="add-agenda" data-dia="${d}" class="w-full py-1.5 border border-dashed border-slate-200 rounded-lg text-slate-400 hover:border-brand-300 hover:text-brand-500 text-[10px] transition">+ agregar</button>`;
 }
@@ -1242,7 +1305,7 @@ selectedDayMobile = selectedDayByWeek[weekKey];
 } else if (selectedDayMobile === null || weekOffset !== 0) {
 selectedDayMobile = weekOffset === 0 ? todayIdx : 0;
 }
-if (selectedDayMobile < 0 || selectedDayMobile > 5) selectedDayMobile = 0;
+if (selectedDayMobile < 0 || selectedDayMobile > 6) selectedDayMobile = 0;
 selectedDayByWeek[weekKey] = selectedDayMobile;
 
 const visitas = getVisitasForWeek(weekOffset);
@@ -1412,8 +1475,8 @@ const ordenados = [
 ...conVisita.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')))
 ];
 
-const { lunes, sabado } = getWeekRange(weekOffset);
-const labelSemana = weekOffset === 0 ? 'esta semana' : `del ${lunes.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})} al ${sabado.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})}`;
+const { lunes, domingo } = getWeekRange(weekOffset);
+const labelSemana = weekOffset === 0 ? 'esta semana' : `del ${lunes.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})} al ${domingo.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})}`;
 
 let html = `<div class="p-4 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3">
 <div>
@@ -1468,10 +1531,10 @@ document.getElementById('filter-pending-empresa')?.addEventListener('change', re
 RENDER: AGENDA GENERAL
 ============================================================ */
 function renderAgenda() {
-const { lunes, sabado } = getWeekRange(weekOffset);
+const { lunes, domingo } = getWeekRange(weekOffset);
 const isCurrentWeek = weekOffset === 0;
 document.getElementById('agenda-week-label').textContent =
-`Semana del ${lunes.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})} al ${sabado.toLocaleDateString('es-AR',{day:'2-digit',month:'short',year:'numeric'})}`;
+`Semana del ${lunes.toLocaleDateString('es-AR',{day:'2-digit',month:'short'})} al ${domingo.toLocaleDateString('es-AR',{day:'2-digit',month:'short',year:'numeric'})}`;
 document.getElementById('agenda-week-sublabel').textContent = isCurrentWeek ? '📍 Semana actual' : (weekOffset > 0 ? `+${weekOffset} semana${weekOffset>1?'s':''}` : `${Math.abs(weekOffset)} semana${weekOffset<-1?'s':''} atrás`);
 renderAgendaDesktop();
 renderAgendaMobile();
@@ -2604,6 +2667,13 @@ switch(action) {
 case 'ver-agenda': openModalAgenda(btn.dataset.id); break;
 case 'edit-agenda': e.stopPropagation(); openModalAgenda(btn.dataset.id); break;
 case 'abrir-mover': e.stopPropagation(); openModalMover(btn.dataset.id); break;
+case 'toggle-card-expandida': {
+const id = btn.dataset.id;
+if (cardsExpandidosManual.has(id)) cardsExpandidosManual.delete(id);
+else cardsExpandidosManual.add(id);
+renderAgendaDesktop();
+break;
+}
 case 'marcar-hecha': {
 e.stopPropagation();
 const a = state.agenda.find(x => sameId(x.id, btn.dataset.id));
@@ -2747,6 +2817,11 @@ if (view === 'planilla') renderPlanilla();
 
 document.getElementById('btn-add-patient').addEventListener('click', () => openModalPaciente());
 document.getElementById('btn-add-visit').addEventListener('click', () => openModalAgenda());
+document.getElementById('btn-toggle-vista').addEventListener('click', () => {
+vistaGlobalOverride = (vistaGlobalOverride === 'comprimida') ? 'completa' : 'comprimida';
+cardsExpandidosManual.clear();
+renderAgendaDesktop();
+});
 document.getElementById('search-pacientes').addEventListener('input', renderPacientes);
 document.getElementById('filter-estado').addEventListener('change', renderPacientes);
 document.getElementById('filter-empresa').addEventListener('change', renderPacientes);
