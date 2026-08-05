@@ -529,8 +529,9 @@ let selectedDayByWeek = {};
 // = el botón global fuerza ese estado en todos los días.
 let vistaGlobalOverride = null;
 const UMBRAL_COMPACTA = 5;
-// ids de visitas puntuales expandidas a mano dentro de un día comprimido.
-let cardsExpandidosManual = new Set();
+// ids de visitas cuyo estado compacta/completa fue tocado a mano, invirtiendo
+// lo que le tocaría por defecto a ese día (esté comprimido o no).
+let cardsToggleadas = new Set();
 
 function uid() { return (crypto && crypto.randomUUID) ? crypto.randomUUID() : 'id-' + Date.now() + '-' + Math.random().toString(36).slice(2,9); }
 
@@ -1176,10 +1177,14 @@ ${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="n
 }
 
 // Fila angosta usada cuando el día está en modo comprimido: solo hora + nombre.
-function visitCompactaHtml(v, p) {
+function visitCompactaHtml(v, p, hoyISO) {
+const puedeMarcarse = v.fechaVisitaSemana <= hoyISO;
+const estado = puedeMarcarse ? estadoHecha(v) : { hecha:false, manual:false };
+const nombreClass = estado.hecha ? 'text-slate-400 line-through' : 'text-slate-800';
 return `<div class="flex items-center gap-2 px-2.5 py-1.5 mb-1 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-brand-300 cursor-pointer transition" data-action="toggle-card-expandida" data-id="${v.id}">
 <span class="time-badge text-[10px] font-semibold text-brand-700 flex-shrink-0">${v.horaInicio}</span>
-<span class="text-[11px] text-slate-800 truncate flex-1">${esc(p.nombre)}</span>
+<span class="text-[11px] ${nombreClass} truncate flex-1">${esc(p.nombre)}</span>
+${estado.hecha ? '<span class="text-[9px] flex-shrink-0" title="Marcada como hecha">✅</span>' : ''}
 ${p.usaOpioides==='Sí' ? '<span class="text-[9px] flex-shrink-0" title="Usa opioides">💊</span>' : ''}
 <span class="text-slate-300 text-[9px] flex-shrink-0">▾</span>
 </div>`;
@@ -1265,10 +1270,14 @@ html += `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2
 return;
 }
 
-if (comprimido && !cardsExpandidosManual.has(v.id)) {
-html += visitCompactaHtml(v, p);
-} else if (comprimido) {
-// Expandida a mano dentro de un día comprimido: mismo contenido, con un botón para volver a comprimir.
+const mostrarCompacta = cardsToggleadas.has(v.id) ? !comprimido : comprimido;
+
+if (mostrarCompacta) {
+html += visitCompactaHtml(v, p, hoyISO);
+} else {
+// Tarjeta completa: ya sea porque el día no está comprimido, o porque se
+// expandió a mano dentro de un día comprimido. En los dos casos lleva el
+// mismo botón para poder volver a comprimir esta visita en particular.
 html += `<div class="border border-slate-200 rounded-lg mb-2 bg-white overflow-hidden">
 <div class="flex justify-end px-2 pt-1.5">
 <button data-action="toggle-card-expandida" data-id="${v.id}" class="text-[9px] text-slate-400 hover:text-slate-600 flex items-center gap-0.5">▴ comprimir</button>
@@ -1276,10 +1285,6 @@ html += `<div class="border border-slate-200 rounded-lg mb-2 bg-white overflow-h
 <div class="visit-card p-2.5 pt-0 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
 ${visitCardCompletaHtml(v, p, hoyISO)}
 </div>
-</div>`;
-} else {
-html += `<div class="visit-card bg-white border border-slate-200 rounded-lg p-2.5 mb-2 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
-${visitCardCompletaHtml(v, p, hoyISO)}
 </div>`;
 }
 });
@@ -2669,8 +2674,8 @@ case 'edit-agenda': e.stopPropagation(); openModalAgenda(btn.dataset.id); break;
 case 'abrir-mover': e.stopPropagation(); openModalMover(btn.dataset.id); break;
 case 'toggle-card-expandida': {
 const id = btn.dataset.id;
-if (cardsExpandidosManual.has(id)) cardsExpandidosManual.delete(id);
-else cardsExpandidosManual.add(id);
+if (cardsToggleadas.has(id)) cardsToggleadas.delete(id);
+else cardsToggleadas.add(id);
 renderAgendaDesktop();
 break;
 }
@@ -2819,7 +2824,7 @@ document.getElementById('btn-add-patient').addEventListener('click', () => openM
 document.getElementById('btn-add-visit').addEventListener('click', () => openModalAgenda());
 document.getElementById('btn-toggle-vista').addEventListener('click', () => {
 vistaGlobalOverride = (vistaGlobalOverride === 'comprimida') ? 'completa' : 'comprimida';
-cardsExpandidosManual.clear();
+cardsToggleadas.clear();
 renderAgendaDesktop();
 });
 document.getElementById('search-pacientes').addEventListener('input', renderPacientes);
