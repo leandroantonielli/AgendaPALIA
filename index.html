@@ -7,20 +7,21 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
-theme: {
-extend: {
-colors: {
-brand: {
-50:'#f0fdfa',100:'#ccfbf1',200:'#99f6e4',300:'#5eead4',400:'#2dd4bf',
-500:'#14b8a6',600:'#0d9488',700:'#0f766e',800:'#115e59',900:'#134e4a',
-}
-},
-fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
-}
-}
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          50:'#f0fdfa',100:'#ccfbf1',200:'#99f6e4',300:'#5eead4',400:'#2dd4bf',
+          500:'#14b8a6',600:'#0d9488',700:'#0f766e',800:'#115e59',900:'#134e4a',
+        }
+      },
+      fontFamily: { sans: ['Inter','system-ui','sans-serif'] }
+    }
+  }
 }
 </script>
 <style>
+
 html, body { font-family: 'Inter', system-ui, sans-serif; }
 .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
 .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -56,6 +57,10 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 .pending-item { transition: all 0.2s; }
 .pending-item.done { opacity: 0.5; }
 .pending-item.done .pending-name { text-decoration: line-through; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-in, .toast, .spin, .visit-card, .lista-row, .day-tab, .pending-item { animation: none; transition: none; }
+}
+
 </style>
 </head>
 <body class="bg-slate-50 text-slate-800 min-h-screen">
@@ -139,6 +144,27 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 </button>
 </div>
 </div>
+
+<div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 mb-4">
+<div class="flex flex-wrap items-start justify-between gap-2 mb-3">
+<div>
+<h3 class="text-sm font-bold text-slate-800">Origen del recorrido</h3>
+<p class="text-xs text-slate-500">Google Maps arma la ruta desde acá. A la mañana suele ser tu casa; a la tarde, el trabajo.</p>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+<label class="block">
+<span class="block text-xs font-semibold text-amber-700 mb-1">Mañana</span>
+<input id="origen-manana" type="text" autocomplete="street-address" placeholder="Ej: mi casa, Av. San Juan 1234" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
+</label>
+<label class="block">
+<span class="block text-xs font-semibold text-indigo-700 mb-1">Tarde</span>
+<input id="origen-tarde" type="text" autocomplete="street-address" placeholder="Ej: trabajo, Villa Soldati" class="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100">
+</label>
+</div>
+<p id="origen-status" class="text-[11px] text-slate-500 mt-2">Si dejás un origen vacío, esa ruta empieza en el primer paciente.</p>
+</div>
+
 <!-- VISTA DESKTOP -->
 <div class="hidden lg:block bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
 <div class="grid grid-cols-7 bg-slate-50 border-b border-slate-200" id="agenda-header"></div>
@@ -411,6 +437,12 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 <div><label class="block text-xs font-medium text-blue-800 mb-1">Token secreto</label><input id="cfg-api-token" type="text" placeholder="UUID de la hoja Config" class="w-full px-3 py-2 rounded-lg border border-blue-200 text-sm font-mono"></div>
 <p class="text-[11px] text-blue-700">Si dejás esto vacío, la app funciona solo con localStorage.</p>
 </div>
+<div class="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+<p class="text-xs font-bold text-amber-800 uppercase tracking-wide">Origen del recorrido</p>
+<p class="text-[11px] text-amber-800">Los mismos datos que en la agenda. La ruta de la mañana sale del primero y la de la tarde del segundo.</p>
+<div><label class="block text-xs font-medium text-amber-900 mb-1">Mañana (casa)</label><input id="cfg-origen-manana" type="text" autocomplete="street-address" placeholder="Ej: mi casa, Av. San Juan 1234" class="w-full px-3 py-2 rounded-lg border border-amber-200 text-sm"></div>
+<div><label class="block text-xs font-medium text-amber-900 mb-1">Tarde (trabajo)</label><input id="cfg-origen-tarde" type="text" autocomplete="street-address" placeholder="Ej: trabajo, Villa Soldati" class="w-full px-3 py-2 rounded-lg border border-amber-200 text-sm"></div>
+</div>
 <div class="bg-slate-50 border border-slate-200 rounded-xl p-4">
 <p class="text-xs font-bold text-slate-600 uppercase tracking-wide mb-2">Constantes de la agenda</p>
 <p class="text-xs text-slate-600">⏱️ Duración de visita: <strong>30 minutos</strong></p>
@@ -483,7 +515,6 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 </div>
 
 <div id="toast-container" class="fixed top-4 right-4 z-[100] space-y-2"></div>
-
 <script>
 /* ============================================================
 CONSTANTES
@@ -511,7 +542,7 @@ pacientes: [],
 agenda: [],
 evoluciones: [],
 tarifas: [],
-config: { apiUrl: '', apiToken: '' },
+config: { apiUrl: '', apiToken: '', origenManana: '', origenTarde: '' },
 lastSync: null,
 pendingChanges: [],
 viewMode: 'cards'
@@ -555,7 +586,10 @@ state.agenda = rawAgenda.map(a => ({ ...a, id: String(a.id).trim(), pacienteId: 
 const rawEvoluciones = JSON.parse(localStorage.getItem(KEYS.evoluciones) || '[]');
 state.evoluciones = rawEvoluciones.map(e => ({ ...e, id: String(e.id).trim(), pacienteId: String(e.pacienteId).trim() }));
 state.tarifas = JSON.parse(localStorage.getItem(KEYS.tarifas) || '[]');
-state.config = JSON.parse(localStorage.getItem(KEYS.config) || '{"apiUrl":"","apiToken":""}');
+state.config = Object.assign(
+  { apiUrl: '', apiToken: '', origenManana: '', origenTarde: '' },
+  JSON.parse(localStorage.getItem(KEYS.config) || '{}')
+);
 state.lastSync = localStorage.getItem(KEYS.lastSync) || null;
 state.pendingChanges = JSON.parse(localStorage.getItem(KEYS.pendingChanges) || '[]');
 state.viewMode = localStorage.getItem(KEYS.viewMode) || 'cards';
@@ -796,7 +830,7 @@ SEED DATA
 ============================================================ */
 function seedData() {
 const hoy = new Date();
-const iso = (d) => d.toISOString().slice(0,10);
+const iso = (d) => isoDate(d);
 const hace = (n) => { const d = new Date(); d.setDate(d.getDate()-n); return iso(d); };
 state.pacientes = [
 { id: uid(), nombre:'Celia La Ruffa', direccion:'Av. San Juan 2845', piso:'5° B', empresa:'CareHome', obraSocial:'OSDE', numeroAfiliado:'284500/01', contacto:'María (hija) - 11-4567-8901', dni:'4567890', fechaNacimiento:'1942-03-15', usaOpioides:'Sí', estado:'Activo' },
@@ -821,7 +855,9 @@ UTILS
 ============================================================ */
 function calcEdad(fn) {
 if (!fn) return null;
-const n = new Date(fn), h = new Date();
+const n = new Date(String(fn).slice(0, 10) + 'T00:00:00');
+if (isNaN(n.getTime())) return null;
+const h = new Date();
 let e = h.getFullYear() - n.getFullYear();
 const m = h.getMonth() - n.getMonth();
 if (m < 0 || (m === 0 && h.getDate() < n.getDate())) e--;
@@ -861,7 +897,12 @@ const domingo = new Date(lunes); domingo.setDate(lunes.getDate() + 6);
 return { lunes, domingo };
 }
 
-function isoDate(d) { return d.toISOString().slice(0,10); }
+function isoDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + day;
+}
 
 function addMinutes(hhmm, min) {
 const partes = String(hhmm || '09:00').split(':');
@@ -938,19 +979,36 @@ function direccionCompleta(p) {
   if (!p) return '';
   return [p.direccion, p.piso].filter(Boolean).join(', ');
 }
+function paraMaps(direccionStr) {
+  const s = String(direccionStr || '').trim();
+  if (!s) return '';
+  if (/buenos aires|argentina|\bcaba\b/i.test(s)) return s;
+  return s + ', Buenos Aires';
+}
 function mapsLinkDireccion(direccionStr) {
-  if (!direccionStr) return null;
-  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(direccionStr + ', Buenos Aires');
+  const q = paraMaps(direccionStr);
+  if (!q) return null;
+  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q);
 }
 function mapsLinkPaciente(p) {
   return mapsLinkDireccion(direccionCompleta(p));
 }
 // Arma un link de ruta multi-parada. Si es 1 sola dirección, es igual a "cómo llegar".
-function mapsLinkRuta(direcciones) {
-  const validas = direcciones.filter(Boolean);
-  if (validas.length === 0) return null;
-  if (validas.length === 1) return mapsLinkDireccion(validas[0]);
-  return 'https://www.google.com/maps/dir/' + validas.map(d => encodeURIComponent(d + ', Buenos Aires')).join('/');
+function mapsLinkRuta(direcciones, origen) {
+  const paradas = (direcciones || []).map(paraMaps).filter(Boolean);
+  if (paradas.length === 0) return null;
+  const salida = paraMaps(origen);
+  const puntos = salida ? [salida, ...paradas] : paradas;
+  if (puntos.length === 1) return mapsLinkDireccion(puntos[0]);
+  return 'https://www.google.com/maps/dir/' + puntos.map(encodeURIComponent).join('/');
+}
+function origenDeTurno(turno) {
+  return turno === 'tarde' ? (state.config.origenTarde || '') : (state.config.origenManana || '');
+}
+function tituloRuta(turno) {
+  const origen = String(origenDeTurno(turno) || '').trim();
+  if (!origen) return 'Ruta en Google Maps. Sin origen: empieza en el primer paciente.';
+  return 'Ruta en Google Maps desde: ' + origen;
 }
 
 /* ============================================================
@@ -959,12 +1017,12 @@ function mapsLinkRuta(direcciones) {
 function diasDesdeUltimaVisita(pacienteId) {
   let ultima = null;
   state.evoluciones.forEach(e => {
-    if (e.pacienteId !== pacienteId || !e.fechaVisita) return;
+    if (!sameId(e.pacienteId, pacienteId) || !e.fechaVisita) return;
     if (!ultima || e.fechaVisita > ultima) ultima = e.fechaVisita;
   });
   // También cuenta las marcas manuales de "hecha" (para quien no suele cargar evoluciones)
   state.agenda.forEach(a => {
-    if (a.pacienteId !== pacienteId || !a.fechasHechas) return;
+    if (!sameId(a.pacienteId, pacienteId) || !a.fechasHechas) return;
     a.fechasHechas.forEach(f => { if (!ultima || f > ultima) ultima = f; });
   });
   if (!ultima) return null; // nunca se le cargó una evolución ni se marcó nada a mano
@@ -976,7 +1034,7 @@ function diasDesdeUltimaVisita(pacienteId) {
 // Chip visual según cuántos días pasaron. Umbrales pensados para seguimiento paliativo semanal/quincenal.
 function chipUltimaVisita(pacienteId) {
   const dias = diasDesdeUltimaVisita(pacienteId);
-  if (dias === null) return '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium whitespace-nowrap">— Sin pendientes</span>';
+  if (dias === null) return '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 font-medium whitespace-nowrap">— Sin visitas</span>';
   if (dias === 0) return '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 font-medium whitespace-nowrap">🟢 Hoy</span>';
   if (dias <= 7) return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-brand-100 text-brand-700 font-medium whitespace-nowrap">🟢 ${dias}d sin visita</span>`;
   if (dias <= 14) return `<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium whitespace-nowrap">🟡 ${dias}d sin visita</span>`;
@@ -1015,8 +1073,8 @@ CHECKLIST ADMINISTRATIVO: estado de la última evolución cargada
 function ultimaEvolucion(pacienteId) {
   let ultima = null;
   state.evoluciones.forEach(e => {
-    if (e.pacienteId !== pacienteId || !e.fechaVisita) return;
-    if (!ultima || e.fechaVisita > ultima) ultima = e;
+    if (!sameId(e.pacienteId, pacienteId) || !e.fechaVisita) return;
+    if (!ultima || String(e.fechaVisita) >= String(ultima.fechaVisita)) ultima = e;
   });
   return ultima;
 }
@@ -1245,13 +1303,9 @@ html += `<button data-action="add-agenda" data-dia="${d}" class="w-full min-h-[8
 const mañana = realItems.filter(v => v.turno === 'mañana').length;
 const tarde = realItems.filter(v => v.turno === 'tarde').length;
 if (mañana > 0 || tarde > 0) {
-const direccionesMañana = realItems.filter(v => v.turno === 'mañana').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
-const direccionesTarde = realItems.filter(v => v.turno === 'tarde').map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim())));
-const rutaMañana = mapsLinkRuta(direccionesMañana);
-const rutaTarde = mapsLinkRuta(direccionesTarde);
 html += `<div class="flex gap-1 mb-2 text-[9px]">
-${mañana > 0 ? (rutaMañana ? `<a href="${rutaMañana}" target="_blank" rel="noopener" title="Ruta de la mañana en Google Maps" class="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded px-1 py-0.5 text-center font-medium">🌅 ${mañana} 🗺️</a>` : `<span class="flex-1 bg-amber-50 text-amber-700 rounded px-1 py-0.5 text-center font-medium">🌅 ${mañana}</span>`) : ''}
-${tarde > 0 ? (rutaTarde ? `<a href="${rutaTarde}" target="_blank" rel="noopener" title="Ruta de la tarde en Google Maps" class="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde} 🗺️</a>` : `<span class="flex-1 bg-indigo-50 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde}</span>`) : ''}
+${mañana > 0 ? `<button type="button" data-action="ruta-turno" data-dia="${d}" data-turno="mañana" title="${esc(tituloRuta('mañana'))}" class="flex-1 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded px-1 py-0.5 text-center font-medium">🌅 ${mañana} 🗺️</button>` : ''}
+${tarde > 0 ? `<button type="button" data-action="ruta-turno" data-dia="${d}" data-turno="tarde" title="${esc(tituloRuta('tarde'))}" class="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde} 🗺️</button>` : ''}
 </div>`;
 }
 
@@ -1365,21 +1419,19 @@ html += `<div class="text-center py-8 text-slate-400">
 </div>`;
 } else {
 if (mañana.length > 0) {
-const rutaMañana = mapsLinkRuta(mañana.map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim()))));
 html += `<div class="mb-4">
-<div class="flex items-center justify-between mb-2">
+<div class="flex items-center justify-between mb-2 gap-2">
 <p class="text-xs font-bold text-amber-700 uppercase tracking-wide flex items-center gap-1"><span>🌅</span> Mañana <span class="text-slate-400 font-normal">(${mañana.length})</span></p>
-${rutaMañana ? `<a href="${rutaMañana}" target="_blank" rel="noopener" class="text-[10px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-2 py-1 rounded-lg">🗺️ Ruta mañana</a>` : ''}
+<button type="button" data-action="ruta-turno" data-dia="${diaNombre}" data-turno="mañana" title="${esc(tituloRuta('mañana'))}" class="text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg">🗺️ Ruta</button>
 </div>
 <div class="space-y-2">${mañana.map(v => renderMobileVisitCard(v, pacientesMap)).join('')}</div>
 </div>`;
 }
 if (tarde.length > 0) {
-const rutaTarde = mapsLinkRuta(tarde.map(v => direccionCompleta(pacientesMap.get(String(v.pacienteId).trim()))));
 html += `<div>
-<div class="flex items-center justify-between mb-2">
+<div class="flex items-center justify-between mb-2 gap-2">
 <p class="text-xs font-bold text-indigo-700 uppercase tracking-wide flex items-center gap-1"><span>🌇</span> Tarde <span class="text-slate-400 font-normal">(${tarde.length})</span></p>
-${rutaTarde ? `<a href="${rutaTarde}" target="_blank" rel="noopener" class="text-[10px] font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2 py-1 rounded-lg">🗺️ Ruta tarde</a>` : ''}
+<button type="button" data-action="ruta-turno" data-dia="${diaNombre}" data-turno="tarde" title="${esc(tituloRuta('tarde'))}" class="text-[11px] font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-lg">🗺️ Ruta</button>
 </div>
 <div class="space-y-2">${tarde.map(v => renderMobileVisitCard(v, pacientesMap)).join('')}</div>
 </div>`;
@@ -1449,6 +1501,7 @@ const panel = document.getElementById('pending-panel');
 const visitas = getVisitasForWeek(weekOffset);
 const visitasPorPaciente = new Map();
 visitas.forEach(v => {
+if (v.movida) return;
 const pid = String(v.pacienteId).trim();
 visitasPorPaciente.set(pid, (visitasPorPaciente.get(pid) || 0) + 1);
 });
@@ -1465,7 +1518,7 @@ const selPendingEmpresaPrevio = document.getElementById('filter-pending-empresa'
 const filtroPendingEmpresa = selPendingEmpresaPrevio ? selPendingEmpresaPrevio.value : '';
 const empresasPending = [...new Set(activos.map(p => p.empresa).filter(Boolean))].sort();
 const opcionesEmpresaHtml = '<option value="">Todas las empresas</option>' +
-empresasPending.map(e => `<option value="${e}" ${e===filtroPendingEmpresa?'selected':''}>${e}</option>`).join('');
+empresasPending.map(e => `<option value="${esc(e)}" ${e===filtroPendingEmpresa?'selected':''}>${esc(e)}</option>`).join('');
 
 let pendientes = activos.filter(p => !pacientesConVisita.has(String(p.id).trim()));
 let conVisita = activos.filter(p => pacientesConVisita.has(String(p.id).trim()));
@@ -1545,7 +1598,7 @@ renderAgendaDesktop();
 renderAgendaMobile();
 renderPendingPanel();
 
-const visitas = getVisitasForWeek(weekOffset);
+const visitas = getVisitasForWeek(weekOffset).filter(v => !v.movida);
 const totalVisitas = visitas.length;
 const totalMin = visitas.length * BLOQUE_TOTAL;
 document.getElementById('stat-week').textContent = totalVisitas;
@@ -1567,12 +1620,12 @@ const selOS = document.getElementById('filter-os');
 if (selEmpresa) {
 const curr = selEmpresa.value;
 selEmpresa.innerHTML = '<option value="">Todas las empresas</option>' +
-empresas.map(e => `<option value="${e}" ${e===curr?'selected':''}>${e}</option>`).join('');
+empresas.map(e => `<option value="${esc(e)}" ${e===curr?'selected':''}>${esc(e)}</option>`).join('');
 }
 if (selOS) {
 const curr = selOS.value;
 selOS.innerHTML = '<option value="">Todas las Obras Sociales</option>' +
-os.map(o => `<option value="${o}" ${o===curr?'selected':''}>${o}</option>`).join('');
+os.map(o => `<option value="${esc(o)}" ${o===curr?'selected':''}>${esc(o)}</option>`).join('');
 }
 }
 
@@ -2150,9 +2203,14 @@ fechaInput.dataset.lastDia = '';
 
 const sel = document.getElementById('ag-paciente');
 sel.innerHTML = state.pacientes
-.filter(p => p.estado !== 'Fuera de seguimiento')
-.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')))
-.map(p => `<option value="${String(p.id)}">${esc(p.nombre)} ${p.empresa ? '('+esc(p.empresa)+')' : ''} ${p.usaOpioides==='Sí'?'💊':''}</option>`)
+.slice()
+.sort((a,b) => {
+  const af = a.estado === 'Fuera de seguimiento' ? 1 : 0;
+  const bf = b.estado === 'Fuera de seguimiento' ? 1 : 0;
+  if (af !== bf) return af - bf;
+  return String(a.nombre||'').localeCompare(String(b.nombre||''), 'es');
+})
+.map(p => `<option value="${esc(p.id)}">${esc(p.nombre)}${p.empresa ? ' ('+esc(p.empresa)+')' : ''}${p.estado==='Fuera de seguimiento' ? ' · fuera' : ''}${p.usaOpioides==='Sí'?' 💊':''}</option>`)
 .join('');
 
 if (id) {
@@ -2216,13 +2274,14 @@ const id = document.getElementById('ag-id').value;
 const a = state.agenda.find(x => sameId(x.id, id));
 if (!a) return;
 if (!a.semanasSaltadas) a.semanasSaltadas = [];
-if (!a.semanasSaltadas.includes(lunesISO)) {
+const yaSaltada = a.semanasSaltadas.some(s => (typeof s === 'string' ? s : s.semana) === lunesISO);
+if (!yaSaltada) {
 a.semanasSaltadas.push(lunesISO);
 saveLocal();
 pushRow('Agenda', a);
 renderSaltos();
 toast('Semana saltada');
-}
+} else toast('Esa semana ya estaba saltada', 'info');
 document.getElementById('ag-salto-fecha').value = '';
 });
 
@@ -2373,7 +2432,7 @@ document.getElementById('ev-pacienteId').value = p.id;
 const edad = calcEdad(p.fechaNacimiento);
 document.getElementById('ev-paciente-info').innerHTML = `<div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-brand-600 text-white flex items-center justify-center font-bold">${String(p.nombre||'?').charAt(0).toUpperCase()}</div><div class="flex-1"><p class="font-semibold text-brand-900">${esc(p.nombre)}</p><p class="text-xs text-brand-700">${esc(p.dni||'')} ${edad!==null?'· '+edad+' años':''} ${p.usaOpioides==='Sí'?'· 💊 Opioides':''} · 🏥 ${esc(p.obraSocial||'-')}</p></div></div>${p.direccion?`<p class="text-xs text-brand-700 mt-2">🏠 ${esc(p.direccion)} ${p.piso?'· '+esc(p.piso):''}</p>`:''}${p.contacto?`<p class="text-xs text-brand-700">📞 ${esc(p.contacto)}</p>`:''}`;
 
-const fecha = fechaPrefill || new Date().toISOString().slice(0,10);
+const fecha = fechaPrefill || isoDate(new Date());
 document.getElementById('ev-fecha').value = fecha;
 
 // Si ya hay un pendiente cargado para este paciente en esta fecha exacta, lo editamos
@@ -2452,13 +2511,19 @@ MODAL: CONFIG
 function openModalConfig() {
 document.getElementById('cfg-api-url').value = state.config.apiUrl || '';
 document.getElementById('cfg-api-token').value = state.config.apiToken || '';
+fillOrigenInputs();
 document.getElementById('modal-config').classList.remove('hidden');
 }
 
 document.getElementById('btn-save-config').addEventListener('click', () => {
 state.config.apiUrl = document.getElementById('cfg-api-url').value.trim();
 state.config.apiToken = document.getElementById('cfg-api-token').value.trim();
+const om = document.getElementById('cfg-origen-manana');
+const ot = document.getElementById('cfg-origen-tarde');
+if (om) state.config.origenManana = om.value.trim();
+if (ot) state.config.origenTarde = ot.value.trim();
 saveLocal();
+fillOrigenInputs();
 closeModal('modal-config');
 toast('Configuración guardada');
 if (state.config.apiUrl && state.config.apiToken) {
@@ -2655,12 +2720,16 @@ CLOSE MODALS
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 document.querySelectorAll('.modal-close').forEach(b => b.addEventListener('click', (e) => { const m = e.target.closest('[id^="modal-"]'); if (m) m.classList.add('hidden'); }));
 document.querySelectorAll('[id^="modal-"]').forEach(m => m.addEventListener('click', (e) => { if (e.target === m) m.classList.add('hidden'); }));
+if (!window.__palKeydown) {
+window.__palKeydown = true;
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  const abiertos = Array.from(document.body.querySelectorAll(':scope > [id^="modal-"]:not(.hidden)'));
+  const root = document.getElementById('paliativos-host') || document.body;
+  const abiertos = Array.from(root.querySelectorAll('[id^="modal-"]:not(.hidden)'));
   if (abiertos.length === 0) return;
   abiertos[abiertos.length - 1].classList.add('hidden');
 });
+}
 
 /* ============================================================
 EVENT DELEGATION
@@ -2724,6 +2793,20 @@ break;
 }
 case 'evolucionar': e.stopPropagation(); openModalEvolucion(btn.dataset.agenda, null, btn.dataset.fecha); break;
 case 'add-agenda': openModalAgenda(null, btn.dataset.dia); break;
+case 'ruta-turno': {
+e.preventDefault();
+e.stopPropagation();
+const dia = btn.dataset.dia;
+const turno = btn.dataset.turno;
+const delDia = getVisitasForWeek(weekOffset)
+  .filter(v => !v.movida && v.diaSemana === dia && v.turno === turno)
+  .sort((a,b) => String(a.horaInicio||'').localeCompare(String(b.horaInicio||'')));
+const dirs = delDia.map(v => direccionCompleta(pacienteById(v.pacienteId)));
+const url = mapsLinkRuta(dirs, origenDeTurno(turno));
+if (!url) { toast('No hay direcciones para armar la ruta', 'info'); break; }
+window.open(url, '_blank', 'noopener');
+break;
+}
 case 'add-agenda-paciente': closeModal('modal-detalle'); openModalAgenda(null, null, btn.dataset.id); break;
 case 'add-agenda-paciente-pending': openModalAgenda(null, null, btn.dataset.id); break;
 case 'select-day-mobile':
@@ -2734,13 +2817,17 @@ break;
 case 'ver-paciente': openModalDetalle(btn.dataset.id); break;
 case 'edit-paciente': closeModal('modal-detalle'); openModalPaciente(btn.dataset.id); break;
 case 'delete-paciente': {
-if (!confirm('¿Eliminar este paciente y todas sus evoluciones?')) return;
+if (!confirm('¿Eliminar este paciente y todas sus visitas y evoluciones?')) return;
 const pid = btn.dataset.id;
+const ags = state.agenda.filter(a=>sameId(a.pacienteId, pid));
+const evs = state.evoluciones.filter(e=>sameId(e.pacienteId, pid));
 state.pacientes = state.pacientes.filter(p=>!sameId(p.id, pid));
 state.agenda = state.agenda.filter(a=>!sameId(a.pacienteId, pid));
 state.evoluciones = state.evoluciones.filter(e=>!sameId(e.pacienteId, pid));
 saveLocal();
 pushDelete('Pacientes', pid);
+ags.forEach(a => pushDelete('Agenda', a.id));
+evs.forEach(e => pushDelete('Evoluciones', e.id));
 closeModal('modal-detalle'); renderAll(); toast('Paciente eliminado','info'); break;
 }
 case 'new-evolucion-paciente': closeModal('modal-detalle'); openModalEvolucion(null, btn.dataset.id); break;
@@ -2749,7 +2836,7 @@ if (!confirm('¿Eliminar este pendiente?')) return;
 state.evoluciones = state.evoluciones.filter(e=>!sameId(e.id, btn.dataset.id));
 saveLocal();
 pushDelete('Evoluciones', btn.dataset.id);
-renderVisitas(); toast('Pendiente eliminado','info'); break;
+renderAll(); toast('Pendiente eliminado','info'); break;
 case 'toggle-sistema': {
 const ev = state.evoluciones.find(x => sameId(x.id, btn.dataset.id));
 if (ev) {
@@ -2897,14 +2984,70 @@ seedData(); renderAll(); toast('Datos demo cargados','info');
 /* ============================================================
 INIT
 ============================================================ */
+
+function refreshOrigenStatus() {
+  const el = document.getElementById('origen-status');
+  if (!el) return;
+  const m = String(state.config.origenManana || '').trim();
+  const t = String(state.config.origenTarde || '').trim();
+  el.textContent = (m ? 'Mañana: desde ' + m : 'Mañana: empieza en el primer paciente')
+    + ' · ' + (t ? 'Tarde: desde ' + t : 'Tarde: empieza en el primer paciente');
+  document.querySelectorAll('[data-action="ruta-turno"]').forEach((btn) => {
+    btn.title = tituloRuta(btn.getAttribute('data-turno'));
+  });
+}
+function fillOrigenInputs() {
+  const pairs = [
+    ['origen-manana', 'origenManana'],
+    ['origen-tarde', 'origenTarde'],
+    ['cfg-origen-manana', 'origenManana'],
+    ['cfg-origen-tarde', 'origenTarde']
+  ];
+  pairs.forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el || el === document.activeElement) return;
+    el.value = state.config[key] || '';
+  });
+  refreshOrigenStatus();
+}
+function bindOrigenInputs() {
+  const map = [
+    ['origen-manana', 'cfg-origen-manana', 'origenManana'],
+    ['origen-tarde', 'cfg-origen-tarde', 'origenTarde']
+  ];
+  map.forEach(([a, b, key]) => {
+    [a, b].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.boundOrigen) return;
+      el.dataset.boundOrigen = '1';
+      el.addEventListener('input', () => {
+        state.config[key] = el.value;
+        const otherId = id === a ? b : a;
+        const other = document.getElementById(otherId);
+        if (other && other !== document.activeElement) other.value = el.value;
+        saveLocal();
+        refreshOrigenStatus();
+      });
+      el.addEventListener('blur', () => {
+        state.config[key] = el.value.trim();
+        saveLocal();
+        fillOrigenInputs();
+      });
+    });
+  });
+}
+
+bindOrigenInputs();
 loadLocal();
 if (state.pacientes.length===0 && state.agenda.length===0 && state.evoluciones.length===0) seedData();
 updateViewToggleUI();
 renderAll();
+fillOrigenInputs();
 if (state.lastSync) updateSyncUI('ok');
 if (state.config.apiUrl && state.config.apiToken) {
 setTimeout(syncWithSheets, 500);
 }
+
 </script>
 </body>
 </html>
