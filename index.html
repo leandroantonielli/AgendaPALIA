@@ -21,7 +21,6 @@ tailwind.config = {
 }
 </script>
 <style>
-
 html, body { font-family: 'Inter', system-ui, sans-serif; }
 .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
 .scrollbar-thin::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -36,6 +35,58 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 .day-column { min-height: 320px; }
 .visit-card { transition: all 0.15s; }
 .visit-card:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.drag-handle {
+  touch-action: none;
+  cursor: grab;
+  color: #94a3b8;
+  border: 0;
+  background: transparent;
+  padding: 0 2px;
+  line-height: 1;
+  font-size: 14px;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+}
+.drag-handle:active { cursor: grabbing; }
+@media (max-width: 1023px) {
+  .drag-handle { font-size: 22px; padding: 4px 6px; }
+}
+.turno-drop:empty { display: none; }
+body.is-dragging .turno-drop {
+  outline: 1px dashed #99f6e4;
+  border-radius: 8px;
+  min-height: 28px;
+  margin-bottom: 4px;
+}
+body.is-dragging .turno-drop:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+body.is-dragging .turno-drop:empty::before {
+  content: "Soltar en la " attr(data-turno);
+  font-size: 10px;
+  color: #0f766e;
+  padding: 6px;
+}
+body.is-dragging .visit-card:hover { transform: none; }
+.drag-card.is-dragging-source { display: none; }
+.drag-ghost {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  background: white;
+  border: 1px solid #0d9488;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #134e4a;
+  box-shadow: 0 8px 24px rgba(0,0,0,.15);
+  max-width: 220px;
+}
+.drop-line { height: 3px; background: #0d9488; border-radius: 2px; margin: 2px 4px; }
 .today-col { background: linear-gradient(180deg, #f0fdfa 0%, #ffffff 100%); }
 .sync-status { font-size: 10px; }
 .sync-pending { color: #f59e0b; }
@@ -57,8 +108,12 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 .pending-item { transition: all 0.2s; }
 .pending-item.done { opacity: 0.5; }
 .pending-item.done .pending-name { text-decoration: line-through; }
+
 @media (prefers-reduced-motion: reduce) {
-  .fade-in, .toast, .spin, .visit-card, .lista-row, .day-tab, .pending-item { animation: none; transition: none; }
+  .fade-in, .toast, .spin, .visit-card, .lista-row, .day-tab, .pending-item {
+    animation: none;
+    transition: none;
+  }
 }
 
 </style>
@@ -516,12 +571,15 @@ html, body { font-family: 'Inter', system-ui, sans-serif; }
 
 <div id="toast-container" class="fixed top-4 right-4 z-[100] space-y-2"></div>
 <script>
+function startPaliativos() {
+
 /* ============================================================
 CONSTANTES
 ============================================================ */
 const DURACION_VISITA = 30;
 const TIEMPO_TRASLADO = 15;
 const BLOQUE_TOTAL = DURACION_VISITA + TIEMPO_TRASLADO;
+const PASO_ENTRE_VISITAS = 30;
 
 /* ============================================================
 STATE
@@ -1010,6 +1068,118 @@ function tituloRuta(turno) {
   if (!origen) return 'Ruta en Google Maps. Sin origen: empieza en el primer paciente.';
   return 'Ruta en Google Maps desde: ' + origen;
 }
+function horaCorta(hhmm) {
+const [h, m] = saneaHoraFront(hhmm).split(':');
+const hh = String(parseInt(h, 10));
+return m === '00' ? hh : hh + ':' + m;
+}
+function franjaAviso(hhmm) {
+const desde = saneaHoraFront(hhmm);
+const hasta = addMinutes(desde, 60);
+return `entre las ${horaCorta(desde)} y las ${horaCorta(hasta)}hs`;
+}
+function etiquetaDiaVisita(v) {
+const dia = String(v.diaSemana || '').toLowerCase();
+if (!v.fechaVisitaSemana) return dia;
+const p = String(v.fechaVisitaSemana).split('-');
+if (p.length !== 3) return dia;
+return `${dia} ${parseInt(p[2], 10)}/${parseInt(p[1], 10)}`;
+}
+function mensajeAvisoVisita(v, p) {
+const nombre = p && p.nombre ? p.nombre : 'el paciente';
+return `Hola buen dia, como estas? estaré pasando a ver a ${nombre} el día ${etiquetaDiaVisita(v)} ${franjaAviso(v.horaInicio)} aproximadamente`;
+}
+function normalizarWhatsappAR(raw) {
+let d = String(raw || '').replace(/\D/g, '');
+if (!d) return '';
+if (d.startsWith('00')) d = d.slice(2);
+if (d.startsWith('54')) d = d.slice(2);
+if (d.startsWith('0')) d = d.slice(1);
+if (d.startsWith('15') && (d.length === 10 || d.length === 11)) d = '11' + d.slice(2);
+else if (d.length >= 12 && d.slice(2, 4) === '15') d = d.slice(0, 2) + d.slice(4);
+else if (d.length >= 13 && d.slice(3, 5) === '15') d = d.slice(0, 3) + d.slice(5);
+else if (d.length >= 14 && d.slice(4, 6) === '15') d = d.slice(0, 4) + d.slice(6);
+if (!(d.startsWith('9') && d.length >= 11) && d.length >= 10 && d.length <= 11) d = '9' + d;
+if (d.length < 11) return '';
+return '54' + d;
+}
+function telefonoDeContacto(contacto) {
+const texto = String(contacto || '');
+const grupos = texto.match(/\+?\d[\d\s().-]{6,}\d/g) || [];
+for (const g of grupos) {
+const n = normalizarWhatsappAR(g);
+if (n) return n;
+}
+return normalizarWhatsappAR(texto);
+}
+function esAparatoCelular() {
+return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+}
+function abrirWhatsapp(numero, texto) {
+const text = encodeURIComponent(texto);
+const ua = navigator.userAgent || '';
+if (/Android/i.test(ua)) {
+window.location.href = `intent://send?phone=${numero}&text=${text}#Intent;scheme=whatsapp;package=com.whatsapp.w4b;end`;
+return;
+}
+if (/iPhone|iPad|iPod/i.test(ua)) {
+window.location.href = `https://wa.me/${numero}?text=${text}`;
+return;
+}
+window.open(`https://web.whatsapp.com/send?phone=${numero}&text=${text}`, '_blank', 'noopener');
+}
+function botonWhatsappHtml(v) {
+return `<button type="button" data-action="whatsapp-visita" data-id="${esc(v.id)}" title="Avisar por WhatsApp" aria-label="Avisar por WhatsApp" class="w-7 h-7 rounded-full bg-[#25D366] hover:bg-[#1da851] text-white flex items-center justify-center shrink-0"><svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M12.04 2C6.58 2 2.15 6.4 2.15 11.83c0 1.74.46 3.44 1.34 4.94L2 22l5.39-1.41a10 10 0 0 0 4.65 1.18h.01c5.46 0 9.89-4.4 9.89-9.83C21.94 6.4 17.5 2 12.04 2zm5.76 14.15c-.24.68-1.4 1.3-1.94 1.38-.5.07-1.12.1-1.81-.11-.41-.13-.95-.31-1.64-.61-2.89-1.25-4.77-4.16-4.91-4.35-.14-.19-1.16-1.54-1.16-2.94s.73-2.08 1-2.37c.24-.27.64-.39.85-.39h.61c.19 0 .45-.07.7.53.26.64.88 2.2.96 2.36.08.16.13.35.03.56-.1.21-.15.34-.3.52-.15.18-.31.4-.44.54-.15.15-.3.32-.13.62.17.3.76 1.25 1.63 2.03 1.12 1 2.06 1.31 2.36 1.46.3.15.47.12.65-.07.18-.2.75-.87.95-1.17.2-.3.4-.24.67-.14.27.1 1.73.82 2.03.96.3.15.5.22.57.34.07.13.07.74-.17 1.42z"/></svg></button>`;
+}
+function pedirConfirmacion(mensaje, onSi) {
+let capa = document.getElementById('confirm-capa');
+if (!capa) {
+capa = document.createElement('div');
+capa.id = 'confirm-capa';
+capa.className = 'fixed inset-0 z-[90] bg-slate-900/40 flex items-end sm:items-center justify-center p-4';
+capa.innerHTML = `<div class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" role="dialog" aria-modal="true">
+<p id="confirm-capa-texto" class="text-sm text-slate-800 leading-relaxed"></p>
+<div class="flex gap-2 mt-4">
+<button type="button" id="confirm-capa-no" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium">Cancelar</button>
+<button type="button" id="confirm-capa-si" class="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-medium">Eliminar</button>
+</div>
+</div>`;
+document.body.appendChild(capa);
+capa.addEventListener('click', (e) => { if (e.target === capa) capa.classList.add('hidden'); });
+}
+capa.classList.remove('hidden');
+capa.querySelector('#confirm-capa-texto').textContent = mensaje;
+const cerrar = () => capa.classList.add('hidden');
+capa.querySelector('#confirm-capa-no').onclick = (e) => { e.preventDefault(); e.stopPropagation(); cerrar(); };
+capa.querySelector('#confirm-capa-si').onclick = (e) => { e.preventDefault(); e.stopPropagation(); cerrar(); onSi(); };
+}
+function eliminarVisitaAgenda(aid) {
+const fila = state.agenda.find(x => sameId(x.id, aid));
+state.agenda.forEach(orig => {
+if (!orig.semanasSaltadas) return;
+let toco = false;
+orig.semanasSaltadas = orig.semanasSaltadas.map(s => {
+if (typeof s === 'object' && s.movidoA && sameId(s.movidoA.agendaIdDestino, aid)) { toco = true; return s.semana; }
+return s;
+});
+if (toco) pushRow('Agenda', orig);
+});
+const extras = [];
+if (fila && fila.semanasSaltadas) {
+fila.semanasSaltadas.forEach(s => {
+if (typeof s === 'object' && s.movidoA && s.movidoA.agendaIdDestino) extras.push(s.movidoA.agendaIdDestino);
+});
+}
+state.agenda = state.agenda.filter(a => !sameId(a.id, aid) && !extras.some(id => sameId(id, a.id)));
+saveLocal();
+pushDelete('Agenda', aid);
+extras.forEach(id => pushDelete('Agenda', id));
+renderAll();
+toast('Visita eliminada', 'info');
+}
+function botonEliminarVisitaHtml(v) {
+return `<button type="button" data-action="delete-agenda" data-id="${esc(v.id)}" title="Eliminar visita" aria-label="Eliminar visita" class="px-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 text-[10px] rounded">🗑️</button>`;
+}
 
 /* ============================================================
 "HACE CUÁNTO NO LO VEO": días desde la última evolución cargada
@@ -1122,10 +1292,12 @@ const lunes = getWeekStart(offset);
 const lunesISO = isoDate(lunes);
 const result = [];
 state.agenda.forEach(a => {
-const hora = saneaHoraFront(a.horaInicio || '09:00');
+const horaBase = saneaHoraFront(a.horaInicio || '09:00');
 const rec = a.recurrente !== false;
 let aparece = false;
 let movidoA = null;
+let hora = horaBase;
+let horaForzada = false;
 if (rec) {
 // "Cada N semanas": si el intervalo es 1 (o no tiene fecha de anclaje, entradas viejas),
 // se comporta exactamente como antes (aparece todas las semanas salvo que esté saltada).
@@ -1146,6 +1318,10 @@ if (!saltadaEntry) {
 aparece = true;
 } else if (typeof saltadaEntry === 'object' && saltadaEntry.movidoA) {
 movidoA = saltadaEntry.movidoA;
+} else if (typeof saltadaEntry === 'object' && saltadaEntry.horaEstaSemana) {
+aparece = true;
+hora = saneaHoraFront(saltadaEntry.horaEstaSemana);
+horaForzada = true;
 }
 }
 } else {
@@ -1165,7 +1341,8 @@ fechaVisitaSemana: isoDate(fecha),
 horaFinVisita: addMinutes(hora, DURACION_VISITA),
 horaLibre: addMinutes(hora, BLOQUE_TOTAL),
 turno: turnoDelDia(hora),
-movida: false
+movida: false,
+horaForzada
 });
 } else if (movidoA) {
 result.push({
@@ -1205,6 +1382,7 @@ const estado = puedeMarcarse ? estadoHecha(v) : { hecha:false, manual:false };
 return `<div class="flex items-start justify-between gap-1 mb-1.5">
 <div class="flex-1 min-w-0">
 <div class="flex items-center gap-1.5">
+<button type="button" class="drag-handle" title="Arrastrar para cambiar el orden" aria-label="Arrastrar">⠿</button>
 <span class="time-badge text-sm font-bold text-brand-700">${v.horaInicio}</span>
 <span class="text-[10px] text-slate-400">→</span>
 <span class="time-badge text-[11px] text-slate-500">${v.horaLibre}</span>
@@ -1214,6 +1392,7 @@ ${v.recurrente ? '<span class="text-[10px] text-slate-400" title="Recurrente">�
 ${edad !== null ? `<p class="text-[10px] text-slate-500">${edad} años</p>` : ''}
 </div>
 <div class="flex flex-col items-end gap-1">
+${botonWhatsappHtml(v)}
 <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 ${p.usaOpioides==='Sí' ? '<span class="text-[10px]" title="Usa opioides">💊</span>' : ''}
 <span class="text-[9px] px-1 py-0.5 rounded ${turnoColor} font-medium">${v.turno === 'mañana' ? '🌅' : '🌇'}</span>
@@ -1226,11 +1405,11 @@ ${estado.hecha
 <p>🏠 <span class="truncate">${esc(p.direccion || '-')}</span>${p.piso ? ' · '+esc(p.piso) : ''}</p>
 ${v.notasAgenda ? `<p class="italic">📝 ${esc(v.notasAgenda)}</p>` : ''}
 </div>
-<div class="flex gap-1 mt-2 opacity-0 group-hover:opacity-100 transition">
+<div class="flex gap-1 mt-2">
 <button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-[10px] font-medium py-1 rounded">📝 Pendientes</button>
 ${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Cómo llegar" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded flex items-center justify-center">📍</a>` : ''}
-<button data-action="abrir-mover" data-id="${v.id}" title="Mover a otro día" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">↪️</button>
 <button data-action="edit-agenda" data-id="${v.id}" class="px-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10px] rounded">✏️</button>
+${botonEliminarVisitaHtml(v)}
 </div>`;
 }
 
@@ -1240,6 +1419,7 @@ const puedeMarcarse = v.fechaVisitaSemana <= hoyISO;
 const estado = puedeMarcarse ? estadoHecha(v) : { hecha:false, manual:false };
 const nombreClass = estado.hecha ? 'text-slate-400 line-through' : 'text-slate-800';
 return `<div class="flex items-center gap-2 px-2.5 py-1.5 mb-1 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-brand-300 cursor-pointer transition" data-action="toggle-card-expandida" data-id="${v.id}">
+<button type="button" class="drag-handle" title="Arrastrar para cambiar el orden" aria-label="Arrastrar">⠿</button>
 <span class="time-badge text-[10px] font-semibold text-brand-700 flex-shrink-0">${v.horaInicio}</span>
 <span class="text-[11px] ${nombreClass} truncate flex-1">${esc(p.nombre)}</span>
 ${estado.hecha ? '<span class="text-[9px] flex-shrink-0" title="Marcada como hecha">✅</span>' : ''}
@@ -1260,6 +1440,40 @@ label.textContent = 'Desplegar todo';
 icon.textContent = '📋';
 label.textContent = 'Comprimir todo';
 }
+}
+
+function htmlTarjetaDesktop(v, p, hoyISO, comprimido) {
+if (!p) {
+return `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2.5 mb-2">
+<div class="flex items-center gap-2 mb-1">
+<span class="text-rose-600 text-lg">⚠️</span>
+<div><p class="text-xs font-bold text-rose-800">Paciente no encontrado</p><p class="text-[10px] text-rose-600">ID: ${esc(v.pacienteId)}</p></div>
+</div>
+<button data-action="delete-agenda" data-id="${v.id}" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium py-1.5 rounded">🗑️ Eliminar visita huérfana</button>
+</div>`;
+}
+const mostrarCompacta = cardsToggleadas.has(v.id) ? !comprimido : comprimido;
+const attrs = `data-visit-id="${esc(v.id)}" data-dia="${esc(v.diaSemana)}" data-turno="${esc(v.turno)}" data-label="${esc(p.nombre)}"`;
+if (mostrarCompacta) {
+return `<div class="drag-card" ${attrs}>${visitCompactaHtml(v, p, hoyISO)}</div>`;
+}
+return `<div class="drag-card border border-slate-200 rounded-lg mb-2 bg-white overflow-hidden" ${attrs}>
+<div class="flex justify-end px-2 pt-1.5">
+<button data-action="toggle-card-expandida" data-id="${v.id}" class="text-[9px] text-slate-400 hover:text-slate-600 flex items-center gap-0.5">▴ comprimir</button>
+</div>
+<div class="visit-card p-2.5 pt-0 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
+${visitCardCompletaHtml(v, p, hoyISO)}
+</div>
+</div>`;
+}
+
+function htmlZonaTurno(dia, turno, items, hoyISO, comprimido, pacientesMap) {
+const lista = items.filter(v => v.turno === turno);
+const cards = lista.map(v => {
+const p = pacientesMap.get(String(v.pacienteId).trim()) || null;
+return htmlTarjetaDesktop(v, p, hoyISO, comprimido);
+}).join('');
+return `<div class="turno-drop" data-dia="${esc(dia)}" data-turno="${turno}">${cards}</div>`;
 }
 
 function renderAgendaDesktop() {
@@ -1308,40 +1522,11 @@ ${mañana > 0 ? `<button type="button" data-action="ruta-turno" data-dia="${d}" 
 ${tarde > 0 ? `<button type="button" data-action="ruta-turno" data-dia="${d}" data-turno="tarde" title="${esc(tituloRuta('tarde'))}" class="flex-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded px-1 py-0.5 text-center font-medium">🌇 ${tarde} 🗺️</button>` : ''}
 </div>`;
 }
-
+}
 const comprimido = diaEstaComprimido(realItems.length);
-
-realItems.forEach(v => {
-const p = pacientesMap.get(String(v.pacienteId).trim()) || null;
-if (!p) {
-html += `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2.5 mb-2">
-<div class="flex items-center gap-2 mb-1">
-<span class="text-rose-600 text-lg">⚠️</span>
-<div><p class="text-xs font-bold text-rose-800">Paciente no encontrado</p><p class="text-[10px] text-rose-600">ID: ${esc(v.pacienteId)}</p></div>
-</div>
-<button data-action="delete-agenda" data-id="${v.id}" class="w-full bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium py-1.5 rounded">🗑️ Eliminar visita huérfana</button>
-</div>`;
-return;
-}
-
-const mostrarCompacta = cardsToggleadas.has(v.id) ? !comprimido : comprimido;
-
-if (mostrarCompacta) {
-html += visitCompactaHtml(v, p, hoyISO);
-} else {
-// Tarjeta completa: ya sea porque el día no está comprimido, o porque se
-// expandió a mano dentro de un día comprimido. En los dos casos lleva el
-// mismo botón para poder volver a comprimir esta visita en particular.
-html += `<div class="border border-slate-200 rounded-lg mb-2 bg-white overflow-hidden">
-<div class="flex justify-end px-2 pt-1.5">
-<button data-action="toggle-card-expandida" data-id="${v.id}" class="text-[9px] text-slate-400 hover:text-slate-600 flex items-center gap-0.5">▴ comprimir</button>
-</div>
-<div class="visit-card p-2.5 pt-0 cursor-pointer group relative" data-action="ver-agenda" data-id="${v.id}">
-${visitCardCompletaHtml(v, p, hoyISO)}
-</div>
-</div>`;
-}
-});
+html += htmlZonaTurno(d, 'mañana', realItems, hoyISO, comprimido, pacientesMap);
+html += htmlZonaTurno(d, 'tarde', realItems, hoyISO, comprimido, pacientesMap);
+if (realItems.length > 0) {
 html += `<button data-action="add-agenda" data-dia="${d}" class="w-full py-1.5 border border-dashed border-slate-200 rounded-lg text-slate-400 hover:border-brand-300 hover:text-brand-500 text-[10px] transition">+ agregar</button>`;
 }
 html += `</div>`;
@@ -1417,30 +1602,27 @@ html += `<div class="text-center py-8 text-slate-400">
 <p class="text-sm">Sin visitas este día</p>
 <button data-action="add-agenda" data-dia="${diaNombre}" class="mt-3 text-xs text-brand-600 hover:text-brand-700 font-medium border border-brand-200 px-4 py-2 rounded-lg bg-brand-50">+ Agendar una visita</button>
 </div>`;
-} else {
-if (mañana.length > 0) {
-html += `<div class="mb-4">
-<div class="flex items-center justify-between mb-2 gap-2">
-<p class="text-xs font-bold text-amber-700 uppercase tracking-wide flex items-center gap-1"><span>🌅</span> Mañana <span class="text-slate-400 font-normal">(${mañana.length})</span></p>
-<button type="button" data-action="ruta-turno" data-dia="${diaNombre}" data-turno="mañana" title="${esc(tituloRuta('mañana'))}" class="text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg">🗺️ Ruta</button>
-</div>
-<div class="space-y-2">${mañana.map(v => renderMobileVisitCard(v, pacientesMap)).join('')}</div>
-</div>`;
 }
-if (tarde.length > 0) {
-html += `<div>
-<div class="flex items-center justify-between mb-2 gap-2">
-<p class="text-xs font-bold text-indigo-700 uppercase tracking-wide flex items-center gap-1"><span>🌇</span> Tarde <span class="text-slate-400 font-normal">(${tarde.length})</span></p>
-<button type="button" data-action="ruta-turno" data-dia="${diaNombre}" data-turno="tarde" title="${esc(tituloRuta('tarde'))}" class="text-[11px] font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-2 rounded-lg">🗺️ Ruta</button>
-</div>
-<div class="space-y-2">${tarde.map(v => renderMobileVisitCard(v, pacientesMap)).join('')}</div>
-</div>`;
-}
+html += bloqueTurnoMobile(diaNombre, 'mañana', mañana, pacientesMap);
+html += bloqueTurnoMobile(diaNombre, 'tarde', tarde, pacientesMap);
+if (items.length > 0) {
 html += `<button data-action="add-agenda" data-dia="${diaNombre}" class="w-full mt-4 py-2.5 border border-dashed border-brand-300 text-brand-600 rounded-lg text-xs font-medium hover:bg-brand-50 transition flex items-center justify-center gap-1">
 <span>➕</span> Agregar otra visita a este día
 </button>`;
 }
 content.innerHTML = html;
+}
+
+function bloqueTurnoMobile(dia, turno, lista, pacientesMap) {
+const esManana = turno === 'mañana';
+const color = esManana ? 'text-amber-700' : 'text-indigo-700';
+const btn = esManana ? 'text-amber-700 bg-amber-50 hover:bg-amber-100' : 'text-indigo-700 bg-indigo-50 hover:bg-indigo-100';
+const cards = (lista || []).map(v => renderMobileVisitCard(v, pacientesMap)).join('');
+const header = lista && lista.length ? `<div class="flex items-center justify-between mb-2 gap-2">
+<p class="text-xs font-bold ${color} uppercase tracking-wide flex items-center gap-1"><span>${esManana ? '🌅' : '🌇'}</span> ${esManana ? 'Mañana' : 'Tarde'} <span class="text-slate-400 font-normal">(${lista.length})</span></p>
+<button type="button" data-action="ruta-turno" data-dia="${esc(dia)}" data-turno="${turno}" title="${esc(tituloRuta(turno))}" class="text-[11px] font-medium ${btn} px-3 py-2 rounded-lg">🗺️ Ruta</button>
+</div>` : '';
+return `<div class="${lista && lista.length ? 'mb-4' : ''}">${header}<div class="turno-drop space-y-2" data-dia="${esc(dia)}" data-turno="${turno}">${cards}</div></div>`;
 }
 
 function renderMobileVisitCard(v, pacientesMap=null) {
@@ -1460,9 +1642,10 @@ const hoyISOCard = isoDate(new Date());
 const puedeMarcarseCard = v.fechaVisitaSemana <= hoyISOCard;
 const estadoCard = puedeMarcarseCard ? estadoHecha(v) : { hecha:false, manual:false };
 
-return `<div class="border ${turnoColor} rounded-xl p-3 cursor-pointer hover:shadow-md transition" data-action="ver-agenda" data-id="${v.id}">
+return `<div class="drag-card border ${turnoColor} rounded-xl p-3 cursor-pointer hover:shadow-md transition" data-action="ver-agenda" data-id="${v.id}" data-visit-id="${esc(v.id)}" data-dia="${esc(v.diaSemana)}" data-turno="${esc(v.turno)}" data-label="${esc(p.nombre)}">
 <div class="flex items-start justify-between gap-2 mb-2">
 <div class="flex items-center gap-2">
+<button type="button" class="drag-handle" title="Arrastrar para cambiar el orden" aria-label="Arrastrar">⠿</button>
 <span class="time-badge text-lg font-bold text-brand-700">${v.horaInicio}</span>
 <span class="text-xs text-slate-400">→</span>
 <span class="time-badge text-sm text-slate-500">${v.horaLibre}</span>
@@ -1471,6 +1654,7 @@ ${v.recurrente ? '<span class="text-xs text-slate-400" title="Recurrente">🔁</
 <div class="flex items-center gap-1">
 <span class="text-[9px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 ${p.usaOpioides==='Sí' ? '<span class="text-xs" title="Usa opioides">💊</span>' : ''}
+${botonWhatsappHtml(v)}
 </div>
 </div>
 ${estadoCard.hecha
@@ -1489,6 +1673,7 @@ ${v.notasAgenda ? `<p class="text-xs text-slate-500 mt-2 italic bg-white/50 roun
 <button data-action="evolucionar" data-agenda="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white text-xs font-medium py-2 rounded-lg">📝 Pendientes</button>
 ${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg flex items-center justify-center">📍</a>` : ''}
 <button data-action="edit-agenda" data-id="${v.id}" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg">✏️</button>
+<button type="button" data-action="delete-agenda" data-id="${esc(v.id)}" title="Eliminar visita" aria-label="Eliminar visita" class="px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs rounded-lg">🗑️</button>
 </div>
 </div>`;
 }
@@ -2336,15 +2521,263 @@ closeModal('modal-agenda'); renderAll();
 
 document.getElementById('btn-delete-agenda').addEventListener('click', async () => {
 const id = document.getElementById('ag-id').value; if (!id) return;
-if (!confirm('¿Eliminar esta visita?')) return;
-state.agenda = state.agenda.filter(a=>!sameId(a.id, id)); saveLocal();
-pushDelete('Agenda', id);
-closeModal('modal-agenda'); renderAll(); toast('Visita eliminada','info');
+const fila = state.agenda.find(x => sameId(x.id, id));
+const pregunta = fila && fila.recurrente !== false
+? 'Esta visita se repite. ¿Eliminarla de todas las semanas?'
+: '¿Eliminar esta visita?';
+pedirConfirmacion(pregunta, () => { closeModal('modal-agenda'); eliminarVisitaAgenda(id); });
 });
 
 /* ============================================================
 MODAL: MOVER VISITA (solo esta semana)
 ============================================================ */
+function horaInicialTurno(turno, horaPropia) {
+if (turnoDelDia(horaPropia) === turno) return horaPropia;
+return turno === 'tarde' ? '13:00' : '09:00';
+}
+
+// puro: las visitas ya estaban en ese turno. Se reparten los horarios que ya había,
+// así un hueco (9:00 y 11:00) no se cierra. Si entra alguien de afuera, se ubica
+// 30 minutos después del anterior y solo se corre a quien quedaría encima.
+function asignarHorarios(ordered, incomingId, puro, destTurno) {
+const norm = ordered.map(v => ({ id: v.id, hora: saneaHoraFront(v.horaInicio) }));
+if (puro) {
+const chairs = norm.map(v => v.hora).slice().sort();
+return norm.map((v, i) => ({ id: v.id, hora: chairs[i] }));
+}
+const locals = norm.filter(v => !sameId(v.id, incomingId));
+const chairs = locals.map(v => v.hora).slice().sort();
+let prev = null;
+let chairIdx = 0;
+const out = [];
+for (const v of norm) {
+let hora;
+if (sameId(v.id, incomingId)) {
+hora = prev ? addMinutes(prev, PASO_ENTRE_VISITAS) : (chairs[0] || horaInicialTurno(destTurno, v.hora));
+} else {
+hora = chairs[chairIdx++];
+if (prev) {
+const min = addMinutes(prev, PASO_ENTRE_VISITAS);
+if (hora < min) hora = min;
+}
+}
+out.push({ id: v.id, hora });
+prev = hora;
+}
+return out;
+}
+
+function moverRecurrenteEstaSemana(a, nuevoDia, nuevaHora) {
+const lunes = getWeekStart(weekOffset);
+const lunesISO = isoDate(lunes);
+const diaIdx = DIA_IDX[nuevoDia];
+const fechaNueva = new Date(lunes);
+fechaNueva.setDate(lunes.getDate() + diaIdx);
+const fechaNuevaISO = isoDate(fechaNueva);
+const nueva = {
+id: uid(),
+pacienteId: a.pacienteId,
+diaSemana: nuevoDia,
+horaInicio: saneaHoraFront(nuevaHora),
+recurrente: false,
+semanaEspecifica: lunesISO,
+semanasSaltadas: [],
+notasAgenda: a.notasAgenda || ''
+};
+state.agenda.push(nueva);
+if (!a.semanasSaltadas) a.semanasSaltadas = [];
+a.semanasSaltadas = a.semanasSaltadas.filter(s => (typeof s === 'string' ? s : s.semana) !== lunesISO);
+a.semanasSaltadas.push({
+semana: lunesISO,
+movidoA: { dia: nuevoDia, fecha: fechaNuevaISO, hora: nueva.horaInicio, agendaIdDestino: nueva.id }
+});
+pushRow('Agenda', a);
+pushRow('Agenda', nueva);
+}
+
+function fijarHoraEstaSemana(a, hora) {
+const lunesISO = isoDate(getWeekStart(weekOffset));
+if (!a.semanasSaltadas) a.semanasSaltadas = [];
+a.semanasSaltadas = a.semanasSaltadas.filter(s => {
+if (typeof s !== 'object' || s.semana !== lunesISO) return true;
+if (s.movidoA) return true;
+if (s.horaEstaSemana) return false;
+return true;
+});
+if (saneaHoraFront(a.horaInicio) !== hora) {
+a.semanasSaltadas.push({ semana: lunesISO, horaEstaSemana: hora });
+}
+pushRow('Agenda', a);
+}
+
+function aplicarHorarioVisita(v, dia, hora, soloEstaSemana) {
+const a = state.agenda.find(x => sameId(x.id, v.id));
+if (!a) return;
+hora = saneaHoraFront(hora);
+const lunesISO = isoDate(getWeekStart(weekOffset));
+if (!soloEstaSemana || a.recurrente === false) {
+if (a.recurrente !== false && a.semanasSaltadas) {
+a.semanasSaltadas = a.semanasSaltadas.filter(s => {
+if (typeof s !== 'object' || s.semana !== lunesISO) return true;
+if (s.horaEstaSemana && !s.movidoA) return false;
+return true;
+});
+}
+if (a.recurrente === false) a.semanaEspecifica = a.semanaEspecifica || lunesISO;
+a.diaSemana = dia;
+a.horaInicio = hora;
+pushRow('Agenda', a);
+return;
+}
+if (a.diaSemana !== dia) {
+moverRecurrenteEstaSemana(a, dia, hora);
+return;
+}
+fijarHoraEstaSemana(a, hora);
+}
+
+function aplicarDrop(visitId, destDia, destTurno, index) {
+const visitas = getVisitasForWeek(weekOffset).filter(v => !v.movida);
+const dragged = visitas.find(v => sameId(v.id, visitId));
+if (!dragged) return;
+if (vistaEsCelular() && dragged.diaSemana !== destDia) return;
+const mismoDia = dragged.diaSemana === destDia;
+const mismoTurno = dragged.turno === destTurno;
+const puro = mismoDia && mismoTurno;
+const dest = visitas
+.filter(v => v.diaSemana === destDia && v.turno === destTurno && !sameId(v.id, dragged.id))
+.sort((a, b) => String(a.horaInicio).localeCompare(String(b.horaInicio)));
+const idx = Math.max(0, Math.min(index, dest.length));
+if (puro) {
+const actual = visitas
+.filter(v => v.diaSemana === destDia && v.turno === destTurno)
+.sort((a, b) => String(a.horaInicio).localeCompare(String(b.horaInicio)));
+if (actual[idx] && sameId(actual[idx].id, dragged.id)) return;
+}
+const ordered = dest.slice();
+ordered.splice(idx, 0, dragged);
+const tiempos = asignarHorarios(ordered, dragged.id, puro, destTurno);
+const hayInvitados = ordered.some(v => v.recurrente === false || v.horaForzada);
+const permanente = mismoDia && !hayInvitados;
+let cambios = 0;
+tiempos.forEach(t => {
+const v = ordered.find(x => sameId(x.id, t.id));
+const diaNuevo = sameId(t.id, dragged.id) ? destDia : v.diaSemana;
+if (v.horaInicio === t.hora && v.diaSemana === diaNuevo) return;
+aplicarHorarioVisita(v, diaNuevo, t.hora, !permanente);
+cambios++;
+});
+if (!cambios) return;
+saveLocal();
+renderAll();
+toast(mismoDia ? 'Orden actualizado' : 'Pasó a ' + destDia + ', solo esta semana');
+}
+
+function vistaEsCelular() {
+return window.matchMedia('(max-width: 1023px)').matches;
+}
+
+function initArrastreVisitas() {
+if (window.__palDrag) return;
+window.__palDrag = true;
+let drag = null;
+let suppressClick = false;
+
+function limpiar() {
+document.body.classList.remove('is-dragging');
+document.querySelectorAll('.is-dragging-source').forEach(el => el.classList.remove('is-dragging-source'));
+document.querySelectorAll('.drop-line').forEach(el => el.remove());
+if (drag && drag.ghost) drag.ghost.remove();
+drag = null;
+}
+
+document.addEventListener('pointerdown', (e) => {
+const handle = e.target.closest('.drag-handle');
+if (!handle || (e.button !== undefined && e.button !== 0)) return;
+const card = handle.closest('[data-visit-id]');
+if (!card) return;
+e.preventDefault();
+e.stopPropagation();
+drag = {
+id: card.dataset.visitId,
+pointerId: e.pointerId,
+startX: e.clientX,
+startY: e.clientY,
+started: false,
+card,
+label: card.dataset.label || 'Visita',
+hora: (card.querySelector('.time-badge') || {}).textContent || '',
+ghost: null,
+zone: null,
+index: 0
+};
+});
+
+document.addEventListener('pointermove', (e) => {
+if (!drag || e.pointerId !== drag.pointerId) return;
+const dx = e.clientX - drag.startX;
+const dy = e.clientY - drag.startY;
+if (!drag.started) {
+if (dx * dx + dy * dy < 36) return;
+drag.started = true;
+drag.card.classList.add('is-dragging-source');
+document.body.classList.add('is-dragging');
+const ghost = document.createElement('div');
+ghost.className = 'drag-ghost';
+ghost.textContent = (drag.hora ? drag.hora + ' · ' : '') + drag.label;
+document.body.appendChild(ghost);
+drag.ghost = ghost;
+}
+e.preventDefault();
+drag.ghost.style.left = (e.clientX + 12) + 'px';
+drag.ghost.style.top = (e.clientY + 12) + 'px';
+document.querySelectorAll('.drop-line').forEach(el => el.remove());
+const bajo = document.elementFromPoint(e.clientX, e.clientY);
+const zone = bajo && bajo.closest('.turno-drop');
+const origenDia = drag.card.dataset.dia;
+if (!zone || (vistaEsCelular() && zone.dataset.dia !== origenDia)) {
+drag.zone = null;
+return;
+}
+const cards = [...zone.querySelectorAll('[data-visit-id]')].filter(c => c.dataset.visitId !== drag.id && !c.classList.contains('is-dragging-source'));
+let index = cards.length;
+for (let i = 0; i < cards.length; i++) {
+const r = cards[i].getBoundingClientRect();
+if (e.clientY < r.top + r.height / 2) { index = i; break; }
+}
+const line = document.createElement('div');
+line.className = 'drop-line';
+if (index >= cards.length) zone.appendChild(line);
+else zone.insertBefore(line, cards[index]);
+drag.zone = zone;
+drag.index = index;
+}, { passive: false });
+
+function soltar(e) {
+if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.pointerId)) return;
+const activo = drag;
+const started = activo.started;
+const zone = activo.zone;
+const index = activo.index;
+const id = activo.id;
+limpiar();
+if (!started) return;
+suppressClick = true;
+if (!zone) return;
+aplicarDrop(id, zone.dataset.dia, zone.dataset.turno, index);
+}
+
+document.addEventListener('pointerup', soltar);
+document.addEventListener('pointercancel', soltar);
+document.addEventListener('click', (e) => {
+if (e.target.closest('.drag-handle') || suppressClick) {
+suppressClick = false;
+e.preventDefault();
+e.stopPropagation();
+}
+}, true);
+}
+
 function openModalMover(agendaVisitaId) {
 // agendaVisitaId es el id de la OCURRENCIA (viene de getVisitasForWeek, que copia el id
 // del agenda original salvo que sea una visita puntual — en ambos casos coincide con
@@ -2368,14 +2801,9 @@ const nuevaHora = document.getElementById('mover-hora').value;
 const a = state.agenda.find(x => sameId(x.id, id));
 if (!a) { closeModal('modal-mover'); return; }
 
-const lunes = getWeekStart(weekOffset);
-const lunesISO = isoDate(lunes);
-const diaIdx = DIA_IDX[nuevoDia];
-const fechaNueva = new Date(lunes); fechaNueva.setDate(lunes.getDate() + diaIdx);
-const fechaNuevaISO = isoDate(fechaNueva);
+const lunesISO = isoDate(getWeekStart(weekOffset));
 
 if (a.recurrente === false) {
-// Ya era una visita puntual: se edita directo, no hace falta dejar rastro.
 a.diaSemana = nuevoDia;
 a.horaInicio = nuevaHora;
 a.semanaEspecifica = lunesISO;
@@ -2386,31 +2814,8 @@ toast('Visita movida');
 return;
 }
 
-// Visita recurrente: se crea una visita puntual nueva en el día/hora elegidos,
-// y se salta esta semana en la original dejando el rastro "movidoA" para el cartelito.
-const nueva = {
-id: uid(),
-pacienteId: a.pacienteId,
-diaSemana: nuevoDia,
-horaInicio: nuevaHora,
-recurrente: false,
-semanaEspecifica: lunesISO,
-semanasSaltadas: [],
-notasAgenda: a.notasAgenda || ''
-};
-state.agenda.push(nueva);
-
-if (!a.semanasSaltadas) a.semanasSaltadas = [];
-// Si ya había un salto plano (manual, sin mover) para esta semana, lo reemplazamos por el que sí lleva el rastro.
-a.semanasSaltadas = a.semanasSaltadas.filter(s => (typeof s === 'string' ? s : s.semana) !== lunesISO);
-a.semanasSaltadas.push({
-semana: lunesISO,
-movidoA: { dia: nuevoDia, fecha: fechaNuevaISO, hora: nuevaHora, agendaIdDestino: nueva.id }
-});
-
+moverRecurrenteEstaSemana(a, nuevoDia, nuevaHora);
 saveLocal();
-pushRow('Agenda', a);
-pushRow('Agenda', nueva);
 closeModal('modal-mover'); renderAll();
 toast('Visita movida a ' + nuevoDia);
 });
@@ -2807,6 +3212,22 @@ if (!url) { toast('No hay direcciones para armar la ruta', 'info'); break; }
 window.open(url, '_blank', 'noopener');
 break;
 }
+case 'whatsapp-visita': {
+e.preventDefault();
+e.stopPropagation();
+const vWp = getVisitasForWeek(weekOffset).find(x => sameId(x.id, btn.dataset.id) && !x.movida);
+if (!vWp) break;
+const pWp = pacienteById(vWp.pacienteId);
+const textoWp = mensajeAvisoVisita(vWp, pWp);
+const telWp = telefonoDeContacto(pWp && pWp.contacto);
+if (!telWp) {
+if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(textoWp).catch(() => {});
+toast('No hay un teléfono claro en el contacto. Copié el mensaje.', 'info');
+break;
+}
+abrirWhatsapp(telWp, textoWp);
+break;
+}
 case 'add-agenda-paciente': closeModal('modal-detalle'); openModalAgenda(null, null, btn.dataset.id); break;
 case 'add-agenda-paciente-pending': openModalAgenda(null, null, btn.dataset.id); break;
 case 'select-day-mobile':
@@ -2860,12 +3281,15 @@ toast(ev.firmoPlanillaOS ? 'Marcado: firmó planilla' : 'Desmarcado', ev.firmoPl
 break;
 }
 case 'delete-agenda': {
-if (!confirm('¿Eliminar esta visita?')) return;
+e.preventDefault();
+e.stopPropagation();
 const aid = btn.dataset.id;
-state.agenda = state.agenda.filter(a=>!sameId(a.id, aid));
-saveLocal();
-pushDelete('Agenda', aid);
-renderAll(); toast('Visita eliminada','info'); break;
+const fila = state.agenda.find(x => sameId(x.id, aid));
+const pregunta = fila && fila.recurrente !== false
+? 'Esta visita se repite. ¿Eliminarla de todas las semanas?'
+: '¿Eliminar esta visita?';
+pedirConfirmacion(pregunta, () => eliminarVisitaAgenda(aid));
+break;
 }
 case 'remove-salto': {
 const fecha = btn.dataset.fecha;
@@ -3043,10 +3467,14 @@ if (state.pacientes.length===0 && state.agenda.length===0 && state.evoluciones.l
 updateViewToggleUI();
 renderAll();
 fillOrigenInputs();
+initArrastreVisitas();
 if (state.lastSync) updateSyncUI('ok');
 if (state.config.apiUrl && state.config.apiToken) {
 setTimeout(syncWithSheets, 500);
 }
+
+}
+startPaliativos();
 
 </script>
 </body>
