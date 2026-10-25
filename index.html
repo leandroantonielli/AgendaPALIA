@@ -333,7 +333,8 @@ body.is-dragging .visit-card:hover { transform: none; }
 <form id="form-paciente" class="flex-1 overflow-auto p-5 space-y-4 scrollbar-thin">
 <input type="hidden" id="pac-id">
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-<div class="md:col-span-2"><label class="block text-xs font-semibold text-slate-600 mb-1">Nombre del NyA *</label><input id="pac-nombre" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"></div>
+<div><label class="block text-xs font-semibold text-slate-600 mb-1">Nombre *</label><input id="pac-nombre" required class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" placeholder="Nelida"></div>
+<div><label class="block text-xs font-semibold text-slate-600 mb-1">Apellido</label><input id="pac-apellido" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" placeholder="Gomez"></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">DNI</label><input id="pac-dni" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Fecha de nacimiento</label><input id="pac-nac" type="date" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Dirección</label><input id="pac-direccion" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></div>
@@ -341,7 +342,9 @@ body.is-dragging .visit-card:hover { transform: none; }
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Empresa / Prepaga</label><input id="pac-empresa" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Obra Social</label><input id="pac-os" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500" placeholder="OSDE, CEMIC, Swiss Medical..."></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Nº Afiliado</label><input id="pac-afiliado" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></div>
-<div><label class="block text-xs font-semibold text-slate-600 mb-1">Contacto</label><input id="pac-contacto" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"></div>
+<div><label class="block text-xs font-semibold text-slate-600 mb-1">Teléfono</label><input id="pac-contacto" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500" placeholder="11-4567-8901"></div>
+<div><label class="block text-xs font-semibold text-slate-600 mb-1">El teléfono es de</label><select id="pac-contacto-de" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"><option value="paciente">El paciente</option><option value="familiar">Un familiar</option></select></div>
+<div id="pac-familiar-wrap" class="md:col-span-2 hidden"><label class="block text-xs font-semibold text-slate-600 mb-1">Nombre del familiar</label><input id="pac-contacto-nombre" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100" placeholder="Marcelo"></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Estado</label><select id="pac-estado" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"><option>Activo</option><option>Intermitente</option><option>Fuera de seguimiento</option></select></div>
 <div><label class="block text-xs font-semibold text-slate-600 mb-1">Usa opioides</label><select id="pac-opioides" class="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm focus:outline-none focus:border-brand-500"><option value="No">No</option><option value="Sí">Sí</option></select></div>
 </div>
@@ -643,7 +646,8 @@ localStorage.setItem(KEYS.viewMode, state.viewMode);
 function loadLocal() {
 try {
 const rawPacientes = JSON.parse(localStorage.getItem(KEYS.pacientes) || '[]');
-state.pacientes = rawPacientes.map(p => ({ ...p, id: String(p.id).trim() }));
+const habiaSinPartir = rawPacientes.some(p => p && !p.fichaPartida);
+state.pacientes = rawPacientes.map(p => migrarFicha(p));
 const rawAgenda = JSON.parse(localStorage.getItem(KEYS.agenda) || '[]');
 state.agenda = rawAgenda.map(a => ({ ...a, id: String(a.id).trim(), pacienteId: String(a.pacienteId).trim() }));
 const rawEvoluciones = JSON.parse(localStorage.getItem(KEYS.evoluciones) || '[]');
@@ -656,6 +660,7 @@ state.config = Object.assign(
 state.lastSync = localStorage.getItem(KEYS.lastSync) || null;
 state.pendingChanges = JSON.parse(localStorage.getItem(KEYS.pendingChanges) || '[]');
 state.viewMode = localStorage.getItem(KEYS.viewMode) || 'cards';
+if (habiaSinPartir) saveLocal();
 } catch(e) { /* reset */ }
 }
 
@@ -769,7 +774,7 @@ async function syncWithSheets() {
 
     // PASO 3: Actualizar estado local SOLO si los datos son válidos
     if (data.pacientes && Array.isArray(data.pacientes)) {
-      state.pacientes = data.pacientes.map(p => ({ ...p, id: String(p.id || '').trim() }));
+      state.pacientes = data.pacientes.map(p => migrarFicha(p));
     }
     if (data.agenda && Array.isArray(data.agenda)) {
       state.agenda = data.agenda.map(a => ({ 
@@ -896,9 +901,9 @@ const hoy = new Date();
 const iso = (d) => isoDate(d);
 const hace = (n) => { const d = new Date(); d.setDate(d.getDate()-n); return iso(d); };
 state.pacientes = [
-{ id: uid(), nombre:'Celia La Ruffa', direccion:'Av. San Juan 2845', piso:'5° B', empresa:'CareHome', obraSocial:'OSDE', numeroAfiliado:'284500/01', contacto:'María (hija) - 11-4567-8901', dni:'4567890', fechaNacimiento:'1942-03-15', usaOpioides:'Sí', estado:'Activo' },
-{ id: uid(), nombre:'Andrea Saez', direccion:'Zeballos 1234', piso:'PB 2', empresa:'PalCare', obraSocial:'Swiss Medical', numeroAfiliado:'SM-98765', contacto:'Laura Saez - 11-5555-4321', dni:'12345678', fechaNacimiento:'1955-08-22', usaOpioides:'Sí', estado:'Activo' },
-{ id: uid(), nombre:'Roberto Gómez', direccion:'Rivadavia 4520', piso:'3° A', empresa:'CEMIC', obraSocial:'CEMIC', numeroAfiliado:'MF-44521', contacto:'Ana Gómez - 11-4432-1100', dni:'8123456', fechaNacimiento:'1948-11-03', usaOpioides:'No', estado:'Intermitente' }
+{ id: uid(), nombre:'Celia', apellido:'La Ruffa', direccion:'Av. San Juan 2845', piso:'5° B', empresa:'CareHome', obraSocial:'OSDE', numeroAfiliado:'284500/01', contacto:'11-4567-8901', contactoDe:'familiar', contactoNombre:'María', dni:'4567890', fechaNacimiento:'1942-03-15', usaOpioides:'Sí', estado:'Activo', fichaPartida:true },
+{ id: uid(), nombre:'Andrea', apellido:'Saez', direccion:'Zeballos 1234', piso:'PB 2', empresa:'PalCare', obraSocial:'Swiss Medical', numeroAfiliado:'SM-98765', contacto:'11-5555-4321', contactoDe:'familiar', contactoNombre:'Laura', dni:'12345678', fechaNacimiento:'1955-08-22', usaOpioides:'Sí', estado:'Activo', fichaPartida:true },
+{ id: uid(), nombre:'Roberto', apellido:'Gómez', direccion:'Rivadavia 4520', piso:'3° A', empresa:'CEMIC', obraSocial:'CEMIC', numeroAfiliado:'MF-44521', contacto:'11-4432-1100', contactoDe:'familiar', contactoNombre:'Ana', dni:'8123456', fechaNacimiento:'1948-11-03', usaOpioides:'No', estado:'Intermitente', fichaPartida:true }
 ];
 state.agenda = [
 { id: uid(), pacienteId: state.pacientes[0].id, diaSemana:'Lunes', horaInicio:'09:00', recurrente:true, semanasSaltadas:[], notasAgenda:'Control de dolor, llevar recetas' },
@@ -1094,17 +1099,58 @@ function mensajeAvisoVisita(v, p) {
 const dia = etiquetaDiaVisita(v);
 const franja = franjaAviso(v.horaInicio);
 const cierre = 'Avisame si no podes en esa franja horaria';
-const paciente = primerNombrePaciente(p && p.nombre) || 'el paciente';
-const quien = nombreContacto(p && p.contacto);
+const paciente = (p && String(p.nombre || '').trim()) || 'el paciente';
+let quien = '';
+if (p && p.contactoDe === 'familiar') quien = String(p.contactoNombre || '').trim();
+if (!quien && p && p.contactoDe !== 'paciente') quien = nombreContacto(p.contacto);
 if (quien) {
 return `Hola ${quien}, como estas? estaré pasando a ver a ${paciente} el día ${dia} ${franja} aproximadamente. ${cierre}`;
 }
 return `Hola ${paciente} buen dia, como estas? estaré pasando a verte el día ${dia} ${franja} aproximadamente. ${cierre}`;
 }
-function primerNombrePaciente(nombre) {
-const n = String(nombre || '').trim();
-if (!n) return '';
-return n.split(/\s+/)[0];
+function nombreCompleto(p) {
+if (!p) return '';
+const n = String(p.nombre || '').trim();
+const a = String(p.apellido || '').trim();
+if (!a) return n;
+if (n.toLowerCase() === a.toLowerCase() || n.toLowerCase().endsWith(' ' + a.toLowerCase())) return n;
+return (n + ' ' + a).trim();
+}
+function nombreAgendaHtml(p) {
+const n = esc((p && p.nombre) || '');
+const a = esc((p && p.apellido) || '');
+if (!n && !a) return 'Paciente';
+if (!a) return n;
+if (!n) return a;
+return `${n} <span class="font-normal text-slate-500">${a}</span>`;
+}
+function textoContacto(p) {
+if (!p || !String(p.contacto || '').trim()) return '-';
+if (p.contactoDe === 'familiar' && String(p.contactoNombre || '').trim()) return `${p.contacto} · ${p.contactoNombre}`;
+return p.contacto;
+}
+function telefonoEnTexto(contacto) {
+const m = String(contacto || '').match(/\+?\d[\d\s().-]{6,}\d/);
+return m ? m[0].trim() : String(contacto || '').trim();
+}
+function migrarFicha(p) {
+const out = { ...(p || {}), id: String((p && p.id) || '').trim() };
+if (!out.fichaPartida && !String(out.apellido || '').trim() && String(out.nombre || '').trim().includes(' ')) {
+const parts = String(out.nombre).trim().split(/\s+/);
+out.nombre = parts.shift();
+out.apellido = parts.join(' ');
+}
+if (!out.contactoDe) {
+const quien = nombreContacto(out.contacto);
+if (quien) {
+out.contactoDe = 'familiar';
+if (!String(out.contactoNombre || '').trim()) out.contactoNombre = quien;
+} else {
+out.contactoDe = 'paciente';
+}
+}
+out.fichaPartida = true;
+return out;
 }
 function nombreContacto(contacto) {
 const sinTel = String(contacto || '').split(/\+?\d[\d\s().-]{6,}\d/)[0] || '';
@@ -1415,7 +1461,7 @@ return `<div class="flex items-start justify-between gap-1 mb-1.5">
 <span class="time-badge text-[11px] text-slate-500">${v.horaLibre}</span>
 ${v.recurrente ? '<span class="text-[10px] text-slate-400" title="Recurrente">🔁</span>' : '<span class="text-[10px] text-indigo-500" title="Visita puntual">📌</span>'}
 </div>
-<p class="text-xs font-semibold text-slate-800 leading-tight truncate mt-0.5">${esc(p.nombre)}</p>
+<p class="text-xs font-semibold text-slate-800 leading-tight truncate mt-0.5">${nombreAgendaHtml(p)}</p>
 ${edad !== null ? `<p class="text-[10px] text-slate-500">${edad} años</p>` : ''}
 </div>
 <div class="flex flex-col items-end gap-1">
@@ -1448,7 +1494,7 @@ const nombreClass = estado.hecha ? 'text-slate-400 line-through' : 'text-slate-8
 return `<div class="flex items-center gap-2 px-2.5 py-1.5 mb-1 border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-brand-300 cursor-pointer transition" data-action="toggle-card-expandida" data-id="${v.id}">
 <button type="button" class="drag-handle" title="Arrastrar para cambiar el orden" aria-label="Arrastrar">⠿</button>
 <span class="time-badge text-[10px] font-semibold text-brand-700 flex-shrink-0">${v.horaInicio}</span>
-<span class="text-[11px] ${nombreClass} truncate flex-1">${esc(p.nombre)}</span>
+<span class="text-[11px] ${nombreClass} truncate flex-1">${nombreAgendaHtml(p)}</span>
 ${estado.hecha ? '<span class="text-[9px] flex-shrink-0" title="Marcada como hecha">✅</span>' : ''}
 ${p.usaOpioides==='Sí' ? '<span class="text-[9px] flex-shrink-0" title="Usa opioides">💊</span>' : ''}
 <span class="text-slate-300 text-[9px] flex-shrink-0">▾</span>
@@ -1480,7 +1526,7 @@ return `<div class="visit-card bg-rose-50 border border-rose-200 rounded-lg p-2.
 </div>`;
 }
 const mostrarCompacta = cardsToggleadas.has(v.id) ? !comprimido : comprimido;
-const attrs = `data-visit-id="${esc(v.id)}" data-dia="${esc(v.diaSemana)}" data-turno="${esc(v.turno)}" data-label="${esc(p.nombre)}"`;
+const attrs = `data-visit-id="${esc(v.id)}" data-dia="${esc(v.diaSemana)}" data-turno="${esc(v.turno)}" data-label="${esc(nombreCompleto(p))}"`;
 if (mostrarCompacta) {
 return `<div class="drag-card" ${attrs}>${visitCompactaHtml(v, p, hoyISO)}</div>`;
 }
@@ -1669,7 +1715,7 @@ const hoyISOCard = isoDate(new Date());
 const puedeMarcarseCard = v.fechaVisitaSemana <= hoyISOCard;
 const estadoCard = puedeMarcarseCard ? estadoHecha(v) : { hecha:false, manual:false };
 
-return `<div class="drag-card border ${turnoColor} rounded-xl p-3 cursor-pointer hover:shadow-md transition" data-action="ver-agenda" data-id="${v.id}" data-visit-id="${esc(v.id)}" data-dia="${esc(v.diaSemana)}" data-turno="${esc(v.turno)}" data-label="${esc(p.nombre)}">
+return `<div class="drag-card border ${turnoColor} rounded-xl p-3 cursor-pointer hover:shadow-md transition" data-action="ver-agenda" data-id="${v.id}" data-visit-id="${esc(v.id)}" data-dia="${esc(v.diaSemana)}" data-turno="${esc(v.turno)}" data-label="${esc(nombreCompleto(p))}">
 <div class="flex items-start justify-between gap-2 mb-2">
 <div class="flex items-center gap-2">
 <button type="button" class="drag-handle" title="Arrastrar para cambiar el orden" aria-label="Arrastrar">⠿</button>
@@ -1687,13 +1733,13 @@ ${botonWhatsappHtml(v)}
 ${estadoCard.hecha
 ? `<div class="mb-1.5 flex items-center gap-1">${chipHecha()}${estadoCard.manual ? `<button data-action="desmarcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" title="Quitar marca" class="text-[10px] text-slate-300 hover:text-slate-500">✕</button>` : ''}</div>`
 : (puedeMarcarseCard ? `<button data-action="marcar-hecha" data-id="${v.id}" data-fecha="${v.fechaVisitaSemana}" class="mb-1.5 text-[10px] px-2 py-0.5 rounded-full border border-slate-200 text-slate-400 hover:border-brand-300 hover:text-brand-600 transition">☐ Marcar hecha</button>` : '')}
-<p class="text-sm font-bold text-slate-800 leading-tight">${esc(p.nombre)}</p>
+<p class="text-sm font-bold text-slate-800 leading-tight">${nombreAgendaHtml(p)}</p>
 <p class="text-xs text-slate-500 mt-0.5">${edad !== null ? edad + ' años · ' : ''}${esc(p.obraSocial || '')}</p>
 <p class="text-xs text-slate-600 mt-2 flex items-start gap-1">
 <span class="flex-shrink-0">🏠</span>
 <span>${esc(p.direccion || '-')}${p.piso ? ' · ' + esc(p.piso) : ''}</span>
 </p>
-${p.contacto ? `<p class="text-xs text-slate-600 mt-0.5 flex items-start gap-1"><span class="flex-shrink-0">📞</span><span>${esc(p.contacto)}</span></p>` : ''}
+${p.contacto ? `<p class="text-xs text-slate-600 mt-0.5 flex items-start gap-1"><span class="flex-shrink-0">📞</span><span>${esc(textoContacto(p))}</span></p>` : ''}
 ${v.notasAgenda ? `<p class="text-xs text-slate-500 mt-2 italic bg-white/50 rounded px-2 py-1">📝 ${esc(v.notasAgenda)}</p>` : ''}
 <div class="flex gap-2 mt-3">
 <button data-action="abrir-mover" data-id="${v.id}" title="Mover a otro día" class="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs rounded-lg flex items-center justify-center">↪️</button>
@@ -1741,8 +1787,8 @@ conVisita = conVisita.filter(p => p.empresa === filtroPendingEmpresa);
 }
 
 const ordenados = [
-...pendientes.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||''))),
-...conVisita.sort((a,b) => String(a.nombre||'').localeCompare(String(b.nombre||'')))
+...pendientes.sort((a,b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es')),
+...conVisita.sort((a,b) => nombreCompleto(a).localeCompare(nombreCompleto(b), 'es'))
 ];
 
 const { lunes, domingo } = getWeekRange(weekOffset);
@@ -1774,7 +1820,7 @@ html += `<div class="pending-item ${done ? 'done' : ''} flex items-center gap-3 
 ${done ? '✓' : String(p.nombre||'?').charAt(0).toUpperCase()}
 </div>
 <div class="flex-1 min-w-0">
-<p class="pending-name text-sm font-medium text-slate-800 truncate">${esc(p.nombre)}</p>
+<p class="pending-name text-sm font-medium text-slate-800 truncate">${esc(nombreCompleto(p))}</p>
 <p class="text-xs text-slate-500 truncate flex items-center gap-1">
 <span class="flex-shrink-0">🏠</span>
 <span class="truncate">${esc(p.direccion || 'Sin dirección')}${p.piso ? ' · ' + esc(p.piso) : ''}</span>
@@ -1852,7 +1898,8 @@ if (filtroEstado && p.estado !== filtroEstado) return false;
 if (filtroEmpresa && p.empresa !== filtroEmpresa) return false;
 if (filtroOS && p.obraSocial !== filtroOS) return false;
 if (!q) return true;
-return String(p.nombre||'').toLowerCase().includes(q) || String(p.dni||'').toLowerCase().includes(q) ||
+return String(nombreCompleto(p)).toLowerCase().includes(q) || String(p.dni||'').toLowerCase().includes(q) ||
+String(p.apellido||'').toLowerCase().includes(q) || String(p.contactoNombre||'').toLowerCase().includes(q) ||
 String(p.obraSocial||'').toLowerCase().includes(q) || String(p.empresa||'').toLowerCase().includes(q) ||
 String(p.contacto||'').toLowerCase().includes(q) || String(p.direccion||'').toLowerCase().includes(q);
 });
@@ -1883,7 +1930,7 @@ const empColor = getEmpresaColor(p.empresa);
 
 return `<div class="bg-white rounded-2xl border border-slate-200 p-5 hover:shadow-md transition cursor-pointer" data-action="ver-paciente" data-id="${p.id}">
 <div class="flex items-start justify-between gap-3 mb-3">
-<div class="flex-1 min-w-0"><h3 class="font-bold text-slate-800 truncate">${esc(p.nombre)}</h3><p class="text-xs text-slate-500">${esc(p.dni||'Sin DNI')} ${edad!==null?'· '+edad+' años':''}</p></div>
+<div class="flex-1 min-w-0"><h3 class="font-bold text-slate-800 truncate">${esc(nombreCompleto(p))}</h3><p class="text-xs text-slate-500">${esc(p.dni||'Sin DNI')} ${edad!==null?'· '+edad+' años':''}</p></div>
 <span class="text-xs font-medium px-2 py-1 rounded-full border ${estadoColor} whitespace-nowrap">${p.estado}</span>
 </div>
 ${p.estado !== 'Fuera de seguimiento' ? `<div class="flex flex-wrap items-center gap-1.5 mb-3">${chipUltimaVisita(p.id)}${chipsChecklistAdmin(p)}</div>` : ''}
@@ -1893,7 +1940,7 @@ ${p.estado !== 'Fuera de seguimiento' ? `<div class="flex flex-wrap items-center
 <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${empColor}">${esc(p.empresa || 'Sin empresa')}</span>
 <span>${esc(p.obraSocial||'-')}</span> ${p.numeroAfiliado?'· '+esc(p.numeroAfiliado):''}
 </p>
-<p class="truncate">📞 ${esc(p.contacto||'-')}</p>
+<p class="truncate">📞 ${esc(textoContacto(p))}</p>
 </div>
 <div class="flex items-center justify-between mt-4 pt-3 border-t border-slate-100">
 <div class="flex gap-3 text-xs"><span class="text-slate-500">🔁 ${vAg}</span><span class="text-slate-500">📝 ${nEv}</span>${osBadge}</div>
@@ -1930,7 +1977,7 @@ return `<tr class="lista-row cursor-pointer hover:bg-slate-50" data-action="ver-
 <div class="flex items-center gap-2">
 <div class="w-8 h-8 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-xs font-bold flex-shrink-0">${String(p.nombre||'?').charAt(0).toUpperCase()}</div>
 <div class="min-w-0">
-<p class="font-semibold text-slate-800 truncate">${esc(p.nombre)}</p>
+<p class="font-semibold text-slate-800 truncate">${esc(nombreCompleto(p))}</p>
 <p class="text-[11px] text-slate-500 truncate md:hidden">${esc(p.dni||'')}${edad?' · '+edad+'a':''} · ${esc(p.obraSocial||'')}</p>
 </div>
 ${p.usaOpioides==='Sí' ? '<span class="text-xs" title="Usa opioides">💊</span>' : ''}
@@ -2257,6 +2304,7 @@ const p = pacienteById(id); if (!p) return;
 document.getElementById('modal-paciente-title').textContent = 'Editar Paciente';
 document.getElementById('pac-id').value = p.id;
 document.getElementById('pac-nombre').value = p.nombre||'';
+document.getElementById('pac-apellido').value = p.apellido||'';
 document.getElementById('pac-dni').value = p.dni||'';
 document.getElementById('pac-nac').value = p.fechaNacimiento||'';
 document.getElementById('pac-direccion').value = p.direccion||'';
@@ -2264,18 +2312,26 @@ document.getElementById('pac-piso').value = p.piso||'';
 document.getElementById('pac-empresa').value = p.empresa||'';
 document.getElementById('pac-os').value = p.obraSocial||'';
 document.getElementById('pac-afiliado').value = p.numeroAfiliado||'';
-document.getElementById('pac-contacto').value = p.contacto||'';
+document.getElementById('pac-contacto').value = telefonoEnTexto(p.contacto);
+document.getElementById('pac-contacto-de').value = p.contactoDe === 'familiar' ? 'familiar' : 'paciente';
+document.getElementById('pac-contacto-nombre').value = p.contactoNombre||'';
 document.getElementById('pac-estado').value = p.estado||'Activo';
 document.getElementById('pac-opioides').value = p.usaOpioides||'No';
-} else document.getElementById('modal-paciente-title').textContent = 'Nuevo Paciente';
+syncCampoFamiliar();
+} else {
+document.getElementById('modal-paciente-title').textContent = 'Nuevo Paciente';
+syncCampoFamiliar();
+}
 document.getElementById('modal-paciente').classList.remove('hidden');
 }
 
 document.getElementById('form-paciente').addEventListener('submit', async (e) => {
 e.preventDefault();
 const id = document.getElementById('pac-id').value;
+const deFamiliar = document.getElementById('pac-contacto-de').value === 'familiar';
 const data = {
 nombre: document.getElementById('pac-nombre').value.trim(),
+apellido: document.getElementById('pac-apellido').value.trim(),
 dni: document.getElementById('pac-dni').value.trim(),
 fechaNacimiento: document.getElementById('pac-nac').value,
 direccion: document.getElementById('pac-direccion').value.trim(),
@@ -2284,6 +2340,9 @@ empresa: document.getElementById('pac-empresa').value.trim(),
 obraSocial: document.getElementById('pac-os').value.trim(),
 numeroAfiliado: document.getElementById('pac-afiliado').value.trim(),
 contacto: document.getElementById('pac-contacto').value.trim(),
+contactoDe: deFamiliar ? 'familiar' : 'paciente',
+contactoNombre: deFamiliar ? document.getElementById('pac-contacto-nombre').value.trim() : '',
+fichaPartida: true,
 estado: document.getElementById('pac-estado').value,
 usaOpioides: document.getElementById('pac-opioides').value
 };
@@ -2302,6 +2361,14 @@ pushRow('Pacientes', row);
 closeModal('modal-paciente'); renderAll();
 });
 
+function syncCampoFamiliar() {
+const de = document.getElementById('pac-contacto-de');
+const wrap = document.getElementById('pac-familiar-wrap');
+if (!de || !wrap) return;
+wrap.classList.toggle('hidden', de.value !== 'familiar');
+}
+document.getElementById('pac-contacto-de').addEventListener('change', syncCampoFamiliar);
+
 /* ============================================================
 MODAL: DETALLE
 ============================================================ */
@@ -2318,7 +2385,7 @@ document.getElementById('detalle-content').innerHTML = `
 <div class="flex items-center gap-4">
 <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-brand-400 to-brand-600 text-white flex items-center justify-center text-2xl font-bold">${String(p.nombre||'?').charAt(0).toUpperCase()}</div>
 <div>
-<h3 class="text-xl font-bold text-slate-800">${esc(p.nombre)}</h3>
+<h3 class="text-xl font-bold text-slate-800">${esc(nombreCompleto(p))}</h3>
 <p class="text-sm text-slate-500">${esc(p.dni||'Sin DNI')} ${edad!==null?'· '+edad+' años':''}</p>
 <div class="flex gap-2 mt-1">
 <span class="inline-block text-xs font-medium px-2 py-0.5 rounded-full bg-brand-100 text-brand-700">${p.estado}</span>
@@ -2334,7 +2401,7 @@ ${mapsLinkPaciente(p) ? `<a href="${mapsLinkPaciente(p)}" target="_blank" rel="n
 </div>
 </div>
 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-<div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Datos personales</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Dirección:</span> <strong>${esc(p.direccion||'-')}</strong> ${p.piso?'· '+esc(p.piso):''}</p><p><span class="text-slate-500">Nacimiento:</span> <strong>${fmtFecha(p.fechaNacimiento)}</strong></p><p><span class="text-slate-500">Contacto:</span> <strong>${esc(p.contacto||'-')}</strong></p></div></div>
+<div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Datos personales</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Dirección:</span> <strong>${esc(p.direccion||'-')}</strong> ${p.piso?'· '+esc(p.piso):''}</p><p><span class="text-slate-500">Nacimiento:</span> <strong>${fmtFecha(p.fechaNacimiento)}</strong></p><p><span class="text-slate-500">Contacto:</span> <strong>${esc(textoContacto(p))}</strong></p></div></div>
 <div class="space-y-2"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Cobertura</h4><div class="bg-slate-50 rounded-xl p-3 space-y-1.5 text-sm"><p><span class="text-slate-500">Obra Social:</span> <strong>${esc(p.obraSocial||'-')}</strong> ${noFirma?'<span class="ml-1 text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">No requiere planilla</span>':''}</p><p><span class="text-slate-500">Nº Afiliado:</span> <strong>${esc(p.numeroAfiliado||'-')}</strong></p><p><span class="text-slate-500">Opioides:</span> <strong class="${p.usaOpioides==='Sí'?'text-amber-600':'text-slate-700'}">${p.usaOpioides}</strong></p></div></div>
 </div>
 <div class="mb-5"><div class="flex items-center justify-between mb-3"><h4 class="text-xs font-bold text-slate-500 uppercase tracking-wide">Agenda (${ags.length})</h4><button data-action="add-agenda-paciente" data-id="${p.id}" class="text-xs bg-brand-600 hover:bg-brand-700 text-white px-3 py-1.5 rounded-lg font-medium">+ Agendar</button></div>${ags.length===0?'<p class="text-sm text-slate-400 italic">Sin visitas agendadas</p>':`<div class="space-y-2">${ags.map(a=>{const hora=a.horaInicio||'--:--';const rec=a.recurrente!==false;const libre=addMinutes(hora,BLOQUE_TOTAL);const tipo=rec?'<span class="text-[10px] text-brand-600">🔁 recurrente</span>':'<span class="text-[10px] text-indigo-600">📌 puntual</span>';return `<div class="bg-brand-50 border border-brand-200 rounded-lg px-3 py-2 text-xs flex items-center justify-between"><div><strong class="text-brand-800">${a.diaSemana}</strong> · <span class="time-badge">${hora} - ${libre}</span> ${tipo}${a.notasAgenda?`<p class="text-slate-600 mt-0.5 italic">📝 ${esc(a.notasAgenda)}</p>`:''}</div><button data-action="edit-agenda" data-id="${a.id}" class="text-slate-500 hover:text-slate-700">✏️</button></div>`;}).join('')}</div>`}</div>
@@ -2420,9 +2487,9 @@ sel.innerHTML = state.pacientes
   const af = a.estado === 'Fuera de seguimiento' ? 1 : 0;
   const bf = b.estado === 'Fuera de seguimiento' ? 1 : 0;
   if (af !== bf) return af - bf;
-  return String(a.nombre||'').localeCompare(String(b.nombre||''), 'es');
+  return nombreCompleto(a).localeCompare(nombreCompleto(b), 'es');
 })
-.map(p => `<option value="${esc(p.id)}">${esc(p.nombre)}${p.empresa ? ' ('+esc(p.empresa)+')' : ''}${p.estado==='Fuera de seguimiento' ? ' · fuera' : ''}${p.usaOpioides==='Sí'?' 💊':''}</option>`)
+.map(p => `<option value="${esc(p.id)}">${esc(nombreCompleto(p))}${p.empresa ? ' ('+esc(p.empresa)+')' : ''}${p.estado==='Fuera de seguimiento' ? ' · fuera' : ''}${p.usaOpioides==='Sí'?' 💊':''}</option>`)
 .join('');
 
 if (id) {
@@ -2814,7 +2881,7 @@ const v = visitasSemana.find(x => sameId(x.id, agendaVisitaId) && !x.movida);
 if (!v) return;
 const p = pacienteById(v.pacienteId);
 document.getElementById('mover-id').value = v.id;
-document.getElementById('mover-info').textContent = `${p ? p.nombre : 'Paciente'} · actualmente ${v.diaSemana} ${v.horaInicio}`;
+document.getElementById('mover-info').textContent = `${p ? nombreCompleto(p) : 'Paciente'} · actualmente ${v.diaSemana} ${v.horaInicio}`;
 document.getElementById('mover-dia').value = v.diaSemana;
 document.getElementById('mover-hora').value = v.horaInicio;
 document.getElementById('modal-mover').classList.remove('hidden');
@@ -2862,7 +2929,7 @@ if (!p) { toast('Paciente no encontrado','error'); return; }
 
 document.getElementById('ev-pacienteId').value = p.id;
 const edad = calcEdad(p.fechaNacimiento);
-document.getElementById('ev-paciente-info').innerHTML = `<div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-brand-600 text-white flex items-center justify-center font-bold">${String(p.nombre||'?').charAt(0).toUpperCase()}</div><div class="flex-1"><p class="font-semibold text-brand-900">${esc(p.nombre)}</p><p class="text-xs text-brand-700">${esc(p.dni||'')} ${edad!==null?'· '+edad+' años':''} ${p.usaOpioides==='Sí'?'· 💊 Opioides':''} · 🏥 ${esc(p.obraSocial||'-')}</p></div></div>${p.direccion?`<p class="text-xs text-brand-700 mt-2">🏠 ${esc(p.direccion)} ${p.piso?'· '+esc(p.piso):''}</p>`:''}${p.contacto?`<p class="text-xs text-brand-700">📞 ${esc(p.contacto)}</p>`:''}`;
+document.getElementById('ev-paciente-info').innerHTML = `<div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-brand-600 text-white flex items-center justify-center font-bold">${String(p.nombre||'?').charAt(0).toUpperCase()}</div><div class="flex-1"><p class="font-semibold text-brand-900">${esc(nombreCompleto(p))}</p><p class="text-xs text-brand-700">${esc(p.dni||'')} ${edad!==null?'· '+edad+' años':''} ${p.usaOpioides==='Sí'?'· 💊 Opioides':''} · 🏥 ${esc(p.obraSocial||'-')}</p></div></div>${p.direccion?`<p class="text-xs text-brand-700 mt-2">🏠 ${esc(p.direccion)} ${p.piso?'· '+esc(p.piso):''}</p>`:''}${p.contacto?`<p class="text-xs text-brand-700">📞 ${esc(textoContacto(p))}</p>`:''}`;
 
 const fecha = fechaPrefill || isoDate(new Date());
 document.getElementById('ev-fecha').value = fecha;
@@ -3017,6 +3084,7 @@ return '';
 
 const FIELD_MAP = [
 { key:'nombre', label:'Nombre', required:true, aliases:['nombre','nya','paciente','nombre pac','pac','nombre completo'] },
+{ key:'apellido', label:'Apellido', required:false, aliases:['apellido','apellidos','surname'] },
 { key:'dni', label:'DNI', required:false, aliases:['dni','documento','doc','num documento'] },
 { key:'direccion', label:'Dirección', required:false, aliases:['direccion','dirección','domicilio','calle','dir'] },
 { key:'piso', label:'Piso', required:false, aliases:['piso','depto','departamento','dpto'] },
@@ -3044,12 +3112,13 @@ return mapping;
 function rowToPaciente(row, mapping) {
 const get = (key) => mapping[key] !== undefined ? (row[mapping[key]] || '').trim() : '';
 const nombre = get('nombre'); if (!nombre) return null;
+const apellido = get('apellido');
 let fechaNac = parseFechaFlexible(get('fechaNacimiento'));
 let opioides = get('usaOpioides');
 if (opioides) { const n = normalize(opioides); opioides = (n === 'si' || n === 's' || n === 'yes' || n === '1') ? 'Sí' : 'No'; } else opioides = 'No';
 let estado = get('estado'); if (!estado) estado = 'Activo';
 else { const n = normalize(estado); if (n.includes('fuera')) estado = 'Fuera de seguimiento'; else if (n.includes('inter')) estado = 'Intermitente'; else estado = 'Activo'; }
-return { id: uid(), nombre, dni: get('dni'), direccion: get('direccion'), piso: get('piso'), empresa: get('empresa'), obraSocial: get('obraSocial'), numeroAfiliado: get('numeroAfiliado'), contacto: get('contacto'), fechaNacimiento: fechaNac, usaOpioides: opioides, estado };
+return migrarFicha({ id: uid(), nombre, apellido, dni: get('dni'), direccion: get('direccion'), piso: get('piso'), empresa: get('empresa'), obraSocial: get('obraSocial'), numeroAfiliado: get('numeroAfiliado'), contacto: get('contacto'), fechaNacimiento: fechaNac, usaOpioides: opioides, estado, fichaPartida: !!apellido });
 }
 
 let csvState = { headers: [], rows: [], mapping: {} };
@@ -3118,7 +3187,7 @@ pacientes.forEach(p => {
 if (p.dni) {
 const existing = state.pacientes.find(x => x.dni === p.dni);
 if (existing) {
-Object.assign(existing, { nombre: p.nombre, direccion: p.direccion, piso: p.piso, empresa: p.empresa, obraSocial: p.obraSocial, numeroAfiliado: p.numeroAfiliado, contacto: p.contacto, fechaNacimiento: p.fechaNacimiento, usaOpioides: p.usaOpioides, estado: p.estado });
+Object.assign(existing, { nombre: p.nombre, apellido: p.apellido || '', contactoDe: p.contactoDe || '', contactoNombre: p.contactoNombre || '', fichaPartida: true, direccion: p.direccion, piso: p.piso, empresa: p.empresa, obraSocial: p.obraSocial, numeroAfiliado: p.numeroAfiliado, contacto: p.contacto, fechaNacimiento: p.fechaNacimiento, usaOpioides: p.usaOpioides, estado: p.estado });
 rowsToSync.push(existing);
 actualizados++; return;
 }
