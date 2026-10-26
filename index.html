@@ -735,7 +735,9 @@ async function syncWithSheets() {
       const pendientes = [...state.pendingChanges];
       for (const change of pendientes) {
         try {
-          await apiCall('POST', { ...change, token: state.config.apiToken });
+          const envio = { ...change };
+          if (envio.action === 'upsertPaciente' && envio.row) envio.row = pacienteParaHoja(migrarFicha(envio.row));
+          await apiCall('POST', { ...envio, token: state.config.apiToken });
           state.pendingChanges = state.pendingChanges.filter(p => p.timestamp !== change.timestamp);
         } catch (err) {
           // FIX: antes este catch cortaba todo el for con un `break`, así que
@@ -774,7 +776,31 @@ async function syncWithSheets() {
 
     // PASO 3: Actualizar estado local SOLO si los datos son válidos
     if (data.pacientes && Array.isArray(data.pacientes)) {
-      state.pacientes = data.pacientes.map(p => migrarFicha(p));
+      const previos = new Map(state.pacientes.map(p => [String(p.id).trim(), p]));
+      const reparar = [];
+      state.pacientes = data.pacientes.map(p => {
+        const id = String(p.id || '').trim();
+        const local = previos.get(id);
+        const remoto = { ...p, id };
+        if (local && String(local.apellido || '').trim()) {
+          const rn = String(remoto.nombre || '').trim();
+          const ln = String(local.nombre || '').trim();
+          const ap = String(local.apellido).trim();
+          if (rn === ln || rn === `${ln} ${ap}` || rn === `${ln} | ${ap}`) {
+            remoto.nombre = ln;
+            remoto.apellido = ap;
+            remoto.fichaPartida = true;
+          }
+        }
+        if (local && local.contactoDe === 'familiar' && local.contactoNombre && !nombreContacto(remoto.contacto)) {
+          remoto.contactoDe = 'familiar';
+          remoto.contactoNombre = local.contactoNombre;
+        }
+        const out = migrarFicha(remoto);
+        if (hojaNecesitaReparacion(p, out)) reparar.push(out);
+        return out;
+      });
+      state._repararPacientes = reparar;
     }
     if (data.agenda && Array.isArray(data.agenda)) {
       state.agenda = data.agenda.map(a => ({ 
@@ -794,8 +820,13 @@ async function syncWithSheets() {
 
     state.lastSync = new Date().toISOString();
     saveLocal();
+    const reparar = state._repararPacientes || [];
+    state._repararPacientes = [];
+    for (const row of reparar) {
+      try { await pushRow('Pacientes', row); } catch (e) { console.error(e); }
+    }
     updateSyncUI('ok');
-    toast('Sincronizado con Google Sheets');
+    toast(reparar.length ? 'Sincronizado. Volví a guardar en la planilla los nombres y teléfonos que se habían cortado.' : 'Sincronizado con Google Sheets');
 
   } catch (err) {
     console.error("💥 Error crítico en la descarga de sincronización:", err);
@@ -871,9 +902,10 @@ statusEl.className = 'sync-status text-center';
 
 async function pushRow(sheetName, row) {
 const actionMap = { 'Pacientes':'upsertPaciente', 'Agenda':'upsertAgenda', 'Evoluciones':'upsertEvolucion' };
-if (!state.config.apiUrl || !state.config.apiToken) { queueChange(actionMap[sheetName], { sheet: sheetName, row }); return; }
-try { await apiCall('POST', { action: actionMap[sheetName], row, token: state.config.apiToken }); }
-catch (err) { console.error(err); queueChange(actionMap[sheetName], { sheet: sheetName, row }); }
+const payload = sheetName === 'Pacientes' ? pacienteParaHoja(row) : row;
+if (!state.config.apiUrl || !state.config.apiToken) { queueChange(actionMap[sheetName], { sheet: sheetName, row: payload }); return; }
+try { await apiCall('POST', { action: actionMap[sheetName], row: payload, token: state.config.apiToken }); }
+catch (err) { console.error(err); queueChange(actionMap[sheetName], { sheet: sheetName, row: payload }); }
 }
 
 async function pushDelete(sheetName, id) {
@@ -1125,18 +1157,85 @@ if (!n) return a;
 return `${n} <span class="font-normal text-slate-500">${a}</span>`;
 }
 function textoContacto(p) {
-if (!p || !String(p.contacto || '').trim()) return '-';
-if (p.contactoDe === 'familiar' && String(p.contactoNombre || '').trim()) return `${p.contacto} · ${p.contactoNombre}`;
-return p.contacto;
+if (!p) return '-';
+const tel = telefonoEnTexto(p.contacto);
+if (p.contactoDe === 'familiar' && String(p.contactoNombre || '').trim()) return tel ? `${tel} · ${p.contactoNombre}` : p.contactoNombre;
+return tel || '-';
+}
+function recuperarNumeroCientifico(valor) {
+const t = String(valor == null ? '' : valor).trim();
+if (!/^[+-]?\d+(\.\d+)?e[+-]?\d+$/i.test(t)) return t;
+const n = Number(t);
+if (!Number.isFinite(n)) return t;
+const redondo = Math.round(n);
+if (Math.abs(n - redondo) > 0.5) return t;
+return String(redondo);
+}
+function limpiarContactoCrudo(contacto) {
+return String(contacto == null ? '' : contacto).replace(/[+-]?\d+(?:\.\d+)?e[+-]?\d+/gi, (m) => recuperarNumeroCientifico(m));
 }
 function telefonoEnTexto(contacto) {
-const m = String(contacto || '').match(/\+?\d[\d\s().-]{6,}\d/);
-return m ? m[0].trim() : String(contacto || '').trim();
+const limpio = limpiarContactoCrudo(contacto);
+const m = limpio.match(/\+?\d[\d\s().-]{6,}\d/);
+return m ? m[0].trim() : '';
+}
+function contactoParaEditar(p) {
+const crudo = limpiarContactoCrudo(p && p.contacto).trim();
+const tel = telefonoEnTexto(crudo);
+if (!crudo) return '';
+const numeros = crudo.match(/\d[\d\s().-]{6,}\d/g) || [];
+if (numeros.length > 1) return crudo;
+if (/[A-Za-zÁÉÍÓÚáéíóúñÑ]/.test(crudo) && !/\(\s*pte\s*\)/i.test(crudo)) return crudo;
+return tel || crudo;
+}
+function pacienteParaHoja(p) {
+const n = String(p.nombre || '').trim();
+const a = String(p.apellido || '').trim();
+let nombre = n;
+if (a && n.toLowerCase() !== a.toLowerCase() && !n.toLowerCase().endsWith(' ' + a.toLowerCase())) {
+nombre = n.includes(' ') ? `${n} | ${a}` : `${n} ${a}`;
+}
+const copia = { ...p, nombre, contacto: contactoParaHoja(p) };
+delete copia.apellido;
+delete copia.contactoDe;
+delete copia.contactoNombre;
+delete copia.fichaPartida;
+return copia;
+}
+function contactoParaHoja(p) {
+const crudo = limpiarContactoCrudo(p && p.contacto).trim();
+const tel = telefonoEnTexto(crudo);
+const fam = p && p.contactoDe === 'familiar' ? String(p.contactoNombre || '').trim() : '';
+const numeros = crudo.match(/\d[\d\s().-]{6,}\d/g) || [];
+if (numeros.length > 1 && !fam) return crudo;
+if (fam) {
+if (tel && nombreContacto(crudo) === fam && !/e[+-]?\d/i.test(String(p.contacto || ''))) return crudo;
+return tel ? `${fam} - ${tel}` : fam;
+}
+if (!tel) return crudo;
+if (/[A-Za-zÁÉÍÓÚáéíóúñÑ]/.test(crudo)) return crudo;
+return `${tel} (pte)`;
+}
+function hojaNecesitaReparacion(remoto, local) {
+const hoja = pacienteParaHoja(local);
+const rn = String(remoto.nombre || '').trim();
+const rc = String(remoto.contacto || '').trim();
+const apellido = String(local.apellido || '').trim();
+const nombreRoto = apellido && hoja.nombre !== rn && !rn.toLowerCase().includes(apellido.toLowerCase());
+const telRoto = /^[+-]?\d+(\.\d+)?e[+-]?\d+$/i.test(rc);
+return nombreRoto || telRoto;
 }
 function migrarFicha(p) {
 const out = { ...(p || {}), id: String((p && p.id) || '').trim() };
-if (!out.fichaPartida && !String(out.apellido || '').trim() && String(out.nombre || '').trim().includes(' ')) {
-const parts = String(out.nombre).trim().split(/\s+/);
+out.contacto = limpiarContactoCrudo(out.contacto).trim();
+const nombreCrudo = String(out.nombre || '').trim();
+const pipe = nombreCrudo.split(/\s+\|\s+/);
+if (!String(out.apellido || '').trim() && pipe.length >= 2 && pipe[0].trim() && pipe.slice(1).join(' | ').trim()) {
+out.nombre = pipe[0].trim();
+out.apellido = pipe.slice(1).join(' | ').trim();
+out.fichaPartida = true;
+} else if (!out.fichaPartida && !String(out.apellido || '').trim() && nombreCrudo.includes(' ')) {
+const parts = nombreCrudo.split(/\s+/);
 out.nombre = parts.shift();
 out.apellido = parts.join(' ');
 }
@@ -1152,15 +1251,27 @@ out.contactoDe = 'paciente';
 out.fichaPartida = true;
 return out;
 }
+function palabraNombreContacto(palabra) {
+const limpia = String(palabra || '').replace(/[^\p{L}]/gu, '');
+if (!limpia) return '';
+const norm = limpia.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const no = ['hijo','hija','esposo','esposa','papa','mama','padre','madre','hermano','hermana','nieto','nieta','sobrino','sobrina','cunado','cunada','yerno','nuera','familiar','pte','paciente','tel','telefono','celular'];
+if (no.includes(norm)) return '';
+return limpia;
+}
 function nombreContacto(contacto) {
-const sinTel = String(contacto || '').split(/\+?\d[\d\s().-]{6,}\d/)[0] || '';
-let cabeza = (sinTel.split(/[,(]/)[0] || '').replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '');
-const palabra = (cabeza.split(/\s+/)[0] || '').replace(/[^\p{L}]/gu, '');
-if (!palabra) return '';
-const norm = palabra.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-const parentesco = ['hijo','hija','esposo','esposa','papa','mama','padre','madre','hermano','hermana','nieto','nieta','sobrino','sobrina','cunado','cunada','yerno','nuera','familiar'];
-if (parentesco.includes(norm)) return '';
-return palabra;
+const texto = limpiarContactoCrudo(contacto);
+const sinTel = texto.split(/\+?\d[\d\s().-]{6,}\d/)[0] || '';
+const cabeza = (sinTel.split(/[,(]/)[0] || '').replace(/^[\s\-–—:]+|[\s\-–—:]+$/g, '');
+const primera = palabraNombreContacto((cabeza.split(/\s+/)[0] || ''));
+if (primera) return primera;
+const parens = texto.match(/\(([^)]+)\)/g) || [];
+for (const bloque of parens) {
+const dentro = bloque.slice(1, -1).trim();
+const pal = palabraNombreContacto((dentro.split(/[\s,]+/)[0] || ''));
+if (pal) return pal;
+}
+return '';
 }
 function normalizarWhatsappAR(raw) {
 let d = String(raw || '').replace(/\D/g, '');
@@ -2312,7 +2423,7 @@ document.getElementById('pac-piso').value = p.piso||'';
 document.getElementById('pac-empresa').value = p.empresa||'';
 document.getElementById('pac-os').value = p.obraSocial||'';
 document.getElementById('pac-afiliado').value = p.numeroAfiliado||'';
-document.getElementById('pac-contacto').value = telefonoEnTexto(p.contacto);
+document.getElementById('pac-contacto').value = contactoParaEditar(p);
 document.getElementById('pac-contacto-de').value = p.contactoDe === 'familiar' ? 'familiar' : 'paciente';
 document.getElementById('pac-contacto-nombre').value = p.contactoNombre||'';
 document.getElementById('pac-estado').value = p.estado||'Activo';
