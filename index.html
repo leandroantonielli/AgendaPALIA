@@ -1189,56 +1189,54 @@ if (/[A-Za-zÁÉÍÓÚáéíóúñÑ]/.test(crudo) && !/\(\s*pte\s*\)/i.test(cru
 return tel || crudo;
 }
 function pacienteParaHoja(p) {
-const n = String(p.nombre || '').trim();
-const a = String(p.apellido || '').trim();
-let nombre = n;
-if (a && n.toLowerCase() !== a.toLowerCase() && !n.toLowerCase().endsWith(' ' + a.toLowerCase())) {
-nombre = n.includes(' ') ? `${n} | ${a}` : `${n} ${a}`;
-}
-const copia = { ...p, nombre, contacto: contactoParaHoja(p) };
-delete copia.apellido;
-delete copia.contactoDe;
-delete copia.contactoNombre;
+const copia = {
+...p,
+nombre: String(p.nombre || '').trim(),
+apellido: String(p.apellido || '').trim(),
+contacto: contactoParaHoja(p),
+contactoDe: p.contactoDe === 'familiar' ? 'familiar' : 'paciente',
+contactoNombre: p.contactoDe === 'familiar' ? String(p.contactoNombre || '').trim() : ''
+};
 delete copia.fichaPartida;
 return copia;
 }
 function contactoParaHoja(p) {
 const crudo = limpiarContactoCrudo(p && p.contacto).trim();
 const tel = telefonoEnTexto(crudo);
+if (!crudo) return '';
+if (/^[+-]?\d+(\.\d+)?e[+-]?\d+$/i.test(String(p.contacto || '').trim())) return tel;
+if (/^\d[\d\s().-]*\(\s*pte\s*\)$/i.test(crudo)) return tel;
 const fam = p && p.contactoDe === 'familiar' ? String(p.contactoNombre || '').trim() : '';
-const numeros = crudo.match(/\d[\d\s().-]{6,}\d/g) || [];
-if (numeros.length > 1 && !fam) return crudo;
-if (fam) {
-if (tel && nombreContacto(crudo) === fam && !/e[+-]?\d/i.test(String(p.contacto || ''))) return crudo;
-return tel ? `${fam} - ${tel}` : fam;
-}
-if (!tel) return crudo;
-if (/[A-Za-zÁÉÍÓÚáéíóúñÑ]/.test(crudo)) return crudo;
-return `${tel} (pte)`;
+if (fam && tel && crudo === `${fam} - ${tel}`) return tel;
+return crudo;
 }
 function hojaNecesitaReparacion(remoto, local) {
 const hoja = pacienteParaHoja(local);
+const telRoto = /^[+-]?\d+(\.\d+)?e[+-]?\d+$/i.test(String(remoto.contacto || '').trim());
+const ap = String(hoja.apellido || '').trim();
 const rn = String(remoto.nombre || '').trim();
-const rc = String(remoto.contacto || '').trim();
-const apellido = String(local.apellido || '').trim();
-const nombreRoto = apellido && hoja.nombre !== rn && !rn.toLowerCase().includes(apellido.toLowerCase());
-const telRoto = /^[+-]?\d+(\.\d+)?e[+-]?\d+$/i.test(rc);
-return nombreRoto || telRoto;
+const apellidoFalta = ap && !String(remoto.apellido || '').trim() && (rn === String(local.nombre || '').trim() || rn === `${local.nombre} | ${ap}`);
+const famFalta = hoja.contactoDe === 'familiar' && hoja.contactoNombre && !String(remoto.contactoNombre || '').trim() && !nombreContacto(remoto.contacto);
+return telRoto || apellidoFalta || famFalta;
 }
 function migrarFicha(p) {
 const out = { ...(p || {}), id: String((p && p.id) || '').trim() };
 out.contacto = limpiarContactoCrudo(out.contacto).trim();
-const nombreCrudo = String(out.nombre || '').trim();
-const pipe = nombreCrudo.split(/\s+\|\s+/);
-if (!String(out.apellido || '').trim() && pipe.length >= 2 && pipe[0].trim() && pipe.slice(1).join(' | ').trim()) {
-out.nombre = pipe[0].trim();
-out.apellido = pipe.slice(1).join(' | ').trim();
-out.fichaPartida = true;
-} else if (!out.fichaPartida && !String(out.apellido || '').trim() && nombreCrudo.includes(' ')) {
-const parts = nombreCrudo.split(/\s+/);
-out.nombre = parts.shift();
-out.apellido = parts.join(' ');
+let nombre = String(out.nombre || '').trim();
+let apellido = String(out.apellido || '').trim();
+const pipe = nombre.split(/\s+\|\s+/);
+if (!apellido && pipe.length >= 2 && pipe[0].trim() && pipe.slice(1).join(' | ').trim()) {
+nombre = pipe[0].trim();
+apellido = pipe.slice(1).join(' | ').trim();
+} else if (apellido && nombre.toLowerCase().endsWith(' ' + apellido.toLowerCase())) {
+nombre = nombre.slice(0, nombre.length - apellido.length).trim();
+} else if (!out.fichaPartida && !apellido && nombre.includes(' ')) {
+const parts = nombre.split(/\s+/);
+nombre = parts.shift();
+apellido = parts.join(' ');
 }
+out.nombre = nombre;
+out.apellido = apellido;
 if (!out.contactoDe) {
 const quien = nombreContacto(out.contacto);
 if (quien) {
